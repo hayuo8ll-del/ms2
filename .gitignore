@@ -1,0 +1,6 @@
+# 動画の生成物。build.py で再生成できるためコミットしない
+video/out/
+
+# Python
+__pycache__/
+*.py[cod]
