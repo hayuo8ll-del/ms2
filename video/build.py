@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import glob
 import html
+import io
 import json
 import shutil
 import struct
@@ -318,29 +319,88 @@ def verify_canvas(ffmpeg: str, png_path: Path, width: int, height: int) -> None:
 # --------------------------------------------------------------------------
 
 
-def synthesize(seg: Segment, wav_path: Path, gap: float, speed: float) -> float:
-    """1 文を読み上げて WAV に保存し、長さ（秒）を返す。"""
+_VOICEVOX_CORE = None
+
+
+def voicevox_core(dict_dir: Path):
+    """VOICEVOX を初期化して使い回す。モデル読み込みに数秒かかるため 1 回だけ。"""
+    global _VOICEVOX_CORE
+    if _VOICEVOX_CORE is None:
+        try:
+            from voicevox_core import AccelerationMode, VoicevoxCore
+        except ImportError:
+            sys.exit(
+                "VOICEVOX が入っていません。setup_voicevox.sh を実行するか、\n"
+                "デッキの meta から engine: voicevox を外してください。"
+            )
+        if not dict_dir.is_dir():
+            sys.exit(f"Open JTalk 辞書が見つかりません: {dict_dir}\nsetup_voicevox.sh を実行してください。")
+        _VOICEVOX_CORE = VoicevoxCore(
+            acceleration_mode=AccelerationMode.CPU, open_jtalk_dict_dir=str(dict_dir)
+        )
+    return _VOICEVOX_CORE
+
+
+def write_wav(path: Path, frames: bytes, sr: int, gap: float) -> float:
+    """PCM を WAV に書き、末尾に無音を足した長さ（秒）を返す。"""
+    silence = b"\x00\x00" * int(sr * gap)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(frames + silence)
+    return (len(frames) // 2 + int(sr * gap)) / sr
+
+
+def synth_voicevox(seg: Segment, wav_path: Path, gap: float, speed: float,
+                   speaker: int, dict_dir: Path) -> float:
+    core = voicevox_core(dict_dir)
+    if not core.is_model_loaded(speaker):
+        core.load_model(speaker)
+
+    # audio_query を経由すると読み上げ速度などを調整できる
+    query = core.audio_query(seg.read, speaker)
+    query.speed_scale = speed
+    wav_bytes = core.synthesis(query, speaker)
+
+    # VOICEVOX はヘッダ付きの WAV を返すので、PCM を取り出して詰め直す
+    with wave.open(io.BytesIO(wav_bytes)) as r:
+        sr = r.getframerate()
+        frames = r.readframes(r.getnframes())
+        if r.getnchannels() == 2:
+            # 念のためモノラルに落とす（通常は 1ch）
+            import numpy as np
+
+            stereo = np.frombuffer(frames, dtype="<i2").reshape(-1, 2)
+            frames = stereo.mean(axis=1).astype("<i2").tobytes()
+
+    # VOICEVOX の出力は音量が揃っているので、正規化はしない
+    return write_wav(wav_path, frames, sr, gap)
+
+
+def synth_openjtalk(seg: Segment, wav_path: Path, gap: float, speed: float) -> float:
     import numpy as np
     import pyopenjtalk
 
     wave_data, sr = pyopenjtalk.tts(seg.read, speed=speed)
     audio = np.asarray(wave_data, dtype=np.float64)
 
-    # クリップを避けつつ、聞き取りやすい音量に正規化する
+    # 文ごとに音量がばらつくので、聞き取りやすい水準に揃える
     peak = float(np.max(np.abs(audio))) if audio.size else 0.0
     if peak > 0:
         audio = audio / peak * (0.89 * 32767)
 
-    silence = np.zeros(int(sr * gap), dtype=np.float64)
-    audio = np.concatenate([audio, silence]).astype("<i2")
+    return write_wav(wav_path, audio.astype("<i2").tobytes(), sr, gap)
 
-    with wave.open(str(wav_path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sr)
-        w.writeframes(audio.tobytes())
 
-    return len(audio) / sr
+def synthesize(seg: Segment, wav_path: Path, gap: float, speed: float,
+               engine: str, speaker: int, dict_dir: Path) -> float:
+    """1 文を読み上げて WAV に保存し、長さ（秒）を返す。"""
+    if engine == "voicevox":
+        return synth_voicevox(seg, wav_path, gap, speed, speaker, dict_dir)
+    if engine == "openjtalk":
+        return synth_openjtalk(seg, wav_path, gap, speed)
+    sys.exit(f"未知の engine: {engine}（voicevox / openjtalk のいずれか）")
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +435,8 @@ def write_srt(segments: list[Segment], path: Path, gap: float) -> None:
 # --------------------------------------------------------------------------
 
 
-def encode(ffmpeg: str, segments: list[Segment], out: Path, fps: int, work: Path) -> None:
+def encode(ffmpeg: str, segments: list[Segment], out: Path, fps: int, work: Path,
+           loudness: float) -> None:
     images = work / "images.txt"
     audios = work / "audio.txt"
 
@@ -395,6 +456,9 @@ def encode(ffmpeg: str, segments: list[Segment], out: Path, fps: int, work: Path
         "-f", "concat", "-safe", "0", "-i", str(images),
         "-f", "concat", "-safe", "0", "-i", str(audios),
         "-map", "0:v", "-map", "1:a",
+        # 合成音声はヘッドルームが広く、そのままだと動画として音が小さい。
+        # 配信で一般的な水準に揃えておく。
+        "-af", f"loudnorm=I={loudness}:TP=-1.5:LRA=11",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
         "-pix_fmt", "yuv420p", "-r", str(fps),
         "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
@@ -427,6 +491,10 @@ def main() -> None:
     fps = int(meta.get("fps", 30))
     gap = float(meta.get("gap", 0.35))
     speed = float(meta.get("speed", 1.0))
+    engine = str(meta.get("engine", "openjtalk"))
+    speaker = int(meta.get("speaker", 30))  # No.7 アナウンス
+    dict_dir = Path(meta.get("dict_dir") or (ROOT / ".voicevox" / "open_jtalk_dic_utf_8-1.11"))
+    loudness = float(meta.get("loudness", -16.0))  # 統合ラウドネスの目標値（LUFS）
 
     name = args.deck.stem
     out_dir = args.out
@@ -456,10 +524,11 @@ def main() -> None:
             verify_canvas(ffmpeg, seg.png, width, height)
         print(f"  {seg.index + 1:>3}/{total}  {seg.caption[:38]}")
 
-    print("\n[2/3] 音声を合成中...")
+    print(f"\n[2/3] 音声を合成中... （engine: {engine}"
+          f"{f' / speaker: {speaker}' if engine == 'voicevox' else ''}）")
     for seg in segments:
         seg.wav = work / f"seg{seg.index:04d}.wav"
-        seg.duration = synthesize(seg, seg.wav, gap, speed)
+        seg.duration = synthesize(seg, seg.wav, gap, speed, engine, speaker, dict_dir)
         print(f"  {seg.index + 1:>3}/{total}  {seg.duration:5.2f}s  {seg.read[:34]}")
 
     total_sec = sum(s.duration for s in segments)
@@ -467,7 +536,7 @@ def main() -> None:
 
     mp4 = out_dir / f"{name}.mp4"
     srt = out_dir / f"{name}.srt"
-    encode(ffmpeg, segments, mp4, fps, work)
+    encode(ffmpeg, segments, mp4, fps, work, loudness)
     write_srt(segments, srt, gap)
 
     # 後から音声だけ差し替えたい人のために、区間の情報も残しておく

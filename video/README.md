@@ -5,6 +5,7 @@
 
 ```bash
 pip install -r requirements.txt
+bash setup_voicevox.sh          # 高品質な音声を使う場合（推奨・任意）
 python3 build.py decks/sample.yaml
 # → out/sample.mp4, out/sample.srt, out/sample.segments.json
 ```
@@ -30,8 +31,45 @@ python3 build.py decks/sample.yaml
 | 段階 | 使うもの |
 | --- | --- |
 | 1. スライドを PNG に | Chromium（`--headless --screenshot`）＋ `theme.css` |
-| 2. ナレーションを WAV に | `pyopenjtalk`（OpenJTalk、完全オフライン） |
-| 3. 連結してエンコード | `imageio-ffmpeg` 同梱の ffmpeg（H.264 + AAC） |
+| 2. ナレーションを WAV に | VOICEVOX または OpenJTalk（下記「音声エンジン」） |
+| 3. 連結してエンコード | `imageio-ffmpeg` 同梱の ffmpeg（H.264 + AAC、ラウドネス正規化あり） |
+
+---
+
+## 音声エンジン
+
+デッキの `meta.engine` で選びます。
+
+| `engine` | 音質 | 準備 |
+| --- | --- | --- |
+| `voicevox` | かなり自然。**推奨** | `bash setup_voicevox.sh`（約 1.3GB のダウンロード） |
+| `openjtalk` | 明らかに合成音声とわかる | 不要（`requirements.txt` だけで動く） |
+
+```yaml
+meta:
+  engine: voicevox
+  speaker: 30 # No.7 アナウンス
+  speed: 1.0
+  loudness: -16.0 # 統合ラウドネスの目標値（LUFS）
+```
+
+### 話者の選び方
+
+`speaker` は VOICEVOX のスタイル ID です。一覧はこう出せます。
+
+```bash
+python3 -c "
+from voicevox_core import METAS
+for m in METAS:
+    print(m.name, [(s.name, s.id) for s in m.styles])
+"
+```
+
+技術解説の動画には、**ナレーション用のスタイルを持つ話者**が向いています。既定にしている「No.7」には `アナウンス(30)` と `読み聞かせ(31)` があり、落ち着いた読み上げになります。
+
+> ⚠ **クレジット表記が必要です。**
+> VOICEVOX で生成した音声を公開する場合、キャラクターごとの利用規約に従ってクレジットを表示してください（例:「VOICEVOX:No.7」）。規約はキャラクターごとに異なります。
+> https://voicevox.hiroshiba.jp/term/
 
 ---
 
@@ -111,19 +149,29 @@ python3 build.py decks/sample.yaml --out /tmp/v   # 出力先を変える
 
 ---
 
-## 音声を高品質なものに差し替える
+## さらに別の音声に差し替える
 
-同梱している OpenJTalk は完全オフラインで動く代わりに、**いかにも合成音声とわかる声**です。より自然な声にしたい場合は次のいずれかで差し替えられます。
+**方法 1: `build.py` に合成関数を足す**
 
-**方法 1: `build.py` の合成部分だけ差し替える**
-
-`synthesize()` が「1 文を受け取って WAV を書き、長さを返す」だけの関数になっています。ここを VOICEVOX や好みの TTS の呼び出しに置き換えれば、他の処理はそのまま使えます。
+`synth_voicevox()` / `synth_openjtalk()` はどちらも「1 文を受け取って WAV を書き、長さを返す」だけの関数です。同じ形の関数を書いて `synthesize()` の分岐に足せば、他の処理はそのまま使えます。
 
 **方法 2: 自分で録音して差し替える**
 
-`out/<名前>.segments.json` に、各文の表示テキスト・読み・長さが並んでいます。これを台本にして録音し、`--keep` で残した `seg0000.wav` … を差し替えてから、`build.py` の最後の連結処理だけを実行してください。
+`out/<名前>.segments.json` に、各文の表示テキスト・読み・長さが並んでいます。これを台本にして録音し、`--keep` で残した `seg0000.wav` … を差し替えてから連結し直してください。
 
-なお、この環境では neural TTS（piper 等）のモデル配布元（`huggingface.co`）に到達できないため、OpenJTalk を採用しています。ネットワークに制限がない環境なら、より自然な選択肢が使えます。
+### この環境で使えなかった選択肢
+
+参考までに、調べた結果を残しておきます。
+
+| 配布元 | 状態 |
+| --- | --- |
+| PyPI | 到達可（プロキシ除外） |
+| GitHub リリース / raw | 到達可 → **VOICEVOX はここから取得している** |
+| GitHub API | このセッションのリポジトリのみ |
+| huggingface.co | 遮断 → piper や Style-Bert-VITS2 のモデルは取得できない |
+| Google / Microsoft の TTS | 遮断 |
+
+`setup_voicevox.sh` が公式ダウンローダを使わず URL 直指定なのはこのためです。公式ダウンローダは `api.github.com` からリリース情報を引くうえ、Rust 製で CA ストアを埋め込んでいるため、プロキシ配下では証明書エラーで止まります。
 
 ---
 

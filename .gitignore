@@ -4,3 +4,6 @@ video/out/
 # Python
 __pycache__/
 *.py[cod]
+
+# VOICEVOX の実体（setup_voicevox.sh で取得できる）
+video/.voicevox/

@@ -16,6 +16,10 @@ meta:
   fps: 30
   gap: 0.35 # セグメント間に入れる無音（秒）
   speed: 1.0 # 読み上げ速度
+  # voicevox を使うには先に setup_voicevox.sh を実行すること。
+  # 未セットアップなら engine: openjtalk に変えれば追加インストール無しで動く。
+  engine: voicevox
+  speaker: 30 # No.7 アナウンス（ナレーション向けのスタイル）
 
 slides:
   - layout: title
