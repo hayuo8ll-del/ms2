@@ -22,18 +22,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # アプリに埋め込んだセルフテスト（?selftest=1）を Chrome で実行する。
+  # 各アプリに埋め込んだセルフテスト（?selftest=1）を Chrome で実行する。
   # 生成ロジックが壊れた状態でデプロイしないための関門。
   selftest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: config-generator
+            page: app/index.html
+          - name: minecraft-blueprint
+            page: app/minecraft/index.html
     steps:
       - uses: actions/checkout@v4
 
-      - name: セルフテストを実行
+      - name: セルフテストを実行（${{ matrix.name }}）
         run: |
           google-chrome --headless=new --disable-gpu --no-sandbox \
             --virtual-time-budget=5000 \
-            --dump-dom "file://$PWD/app/index.html?selftest=1" > dom.html
+            --dump-dom "file://$PWD/${{ matrix.page }}?selftest=1" > dom.html
           sed -n 's/.*\(SELFTEST: [0-9]* passed, [0-9]* failed\).*/\1/p' dom.html | head -1
           grep -q "SELFTEST: [0-9]* passed, 0 failed" dom.html
 

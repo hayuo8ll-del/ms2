@@ -1,0 +1,1903 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>マイクラ建築図面ジェネレータ</title>
+<meta name="description" content="円・球・ドーム・円錐・屋根・螺旋階段・アーチを、サイズを入れるだけでレイヤーごとの平面図にします。テキスト図面と setblock コマンドも出力します。">
+<style>
+/* ------------------------------------------------------------------
+   配色。設定ジェネレータ（../index.html）と同じトークンを使う。
+   ライトを基準に、prefers-color-scheme と data-theme の両方で
+   ダークへ切り替えられるようにしている（トグルが OS 設定に勝つ）。
+   ------------------------------------------------------------------ */
+:root {
+  --bg: #faf9f7;
+  --panel: #ffffff;
+  --panel-2: #f4f2ef;
+  --text: #1f1d1b;
+  --muted: #6b665f;
+  --line: #e2ded8;
+  --accent: #c1552f;
+  --accent-soft: #fdf0ea;
+  --warn: #9a6a00;
+  --warn-soft: #fdf6e3;
+  --danger: #b3261e;
+  --danger-soft: #fdecea;
+  --ok: #2e6b45;
+  --code-bg: #f4f2ef;
+  --radius: 8px;
+
+  /* 図面のインク。canvas から getComputedStyle で読む */
+  --cell: #b9ae9b;
+  --cell-edge: #c1552f;
+  --cell-stair: #6f8a4a;
+  --cell-corner: #4f7f8a;
+  --cell-pillar: #6b665f;
+  --ghost: #ece7de;
+  --grid: #e2ded8;
+  --grid-major: #cdc6bb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17161a;
+    --panel: #1f1e23;
+    --panel-2: #26252b;
+    --text: #eceaee;
+    --muted: #a09ba6;
+    --line: #35333b;
+    --accent: #e0855f;
+    --accent-soft: #2e211c;
+    --warn: #e0b44a;
+    --warn-soft: #2c2618;
+    --danger: #f08a80;
+    --danger-soft: #2f1c1a;
+    --ok: #7dc79b;
+    --code-bg: #16151a;
+
+    --cell: #56504a;
+    --cell-edge: #e0855f;
+    --cell-stair: #8fae63;
+    --cell-corner: #6fa6b4;
+    --cell-pillar: #8b8580;
+    --ghost: #2a2830;
+    --grid: #302e36;
+    --grid-major: #45424c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17161a; --panel: #1f1e23; --panel-2: #26252b; --text: #eceaee;
+  --muted: #a09ba6; --line: #35333b; --accent: #e0855f; --accent-soft: #2e211c;
+  --warn: #e0b44a; --warn-soft: #2c2618; --danger: #f08a80; --danger-soft: #2f1c1a;
+  --ok: #7dc79b; --code-bg: #16151a;
+  --cell: #56504a; --cell-edge: #e0855f; --cell-stair: #8fae63; --cell-corner: #6fa6b4;
+  --cell-pillar: #8b8580; --ghost: #2a2830; --grid: #302e36; --grid-major: #45424c;
+}
+:root[data-theme="light"] {
+  --bg: #faf9f7; --panel: #ffffff; --panel-2: #f4f2ef; --text: #1f1d1b;
+  --muted: #6b665f; --line: #e2ded8; --accent: #c1552f; --accent-soft: #fdf0ea;
+  --warn: #9a6a00; --warn-soft: #fdf6e3; --danger: #b3261e; --danger-soft: #fdecea;
+  --ok: #2e6b45; --code-bg: #f4f2ef;
+  --cell: #b9ae9b; --cell-edge: #c1552f; --cell-stair: #6f8a4a; --cell-corner: #4f7f8a;
+  --cell-pillar: #6b665f; --ghost: #ece7de; --grid: #e2ded8; --grid-major: #cdc6bb;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+}
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace; }
+
+/* ---------- ヘッダー ---------- */
+header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+header h1 .dot { color: var(--accent); }
+header .sub { color: var(--muted); font-size: 12px; margin: 0; }
+header .sub a { color: var(--accent); }
+header .spacer { flex: 1; }
+header .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ---------- 共通パーツ ---------- */
+button, select, input, textarea {
+  font: inherit; color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.ghost { background: transparent; }
+button.mini { padding: 2px 8px; font-size: 12px; }
+label { display: block; font-size: 13px; margin-bottom: 4px; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+.field { margin-bottom: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 12px; }
+.sw { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sw input { width: auto; }
+.sw label { margin: 0; }
+input[type="number"] { width: 100%; }
+input[type="text"] { width: 100%; }
+
+/* ---------- レイアウト ---------- */
+main {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 0;
+  height: calc(100vh - 62px);
+}
+.pane { min-width: 0; overflow-y: auto; }
+.pane.form { border-right: 1px solid var(--line); padding: 18px 20px 60px; }
+.pane.out { background: var(--panel-2); display: flex; flex-direction: column; }
+.pane.form h2 { font-size: 15px; margin: 0 0 10px; }
+
+fieldset {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px 4px; margin: 0 0 18px; background: var(--panel);
+}
+legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
+
+/* ---------- 形状の選択 ---------- */
+.shapes { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin-bottom: 12px; }
+.shapes button {
+  padding: 8px 6px; font-size: 12.5px; background: var(--panel);
+  border-radius: var(--radius); line-height: 1.35;
+}
+.shapes button[aria-pressed="true"] {
+  border-color: var(--accent); color: var(--accent); font-weight: 600; background: var(--accent-soft);
+}
+.shape-desc { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+
+/* ---------- 警告 ---------- */
+.warnings { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.warning {
+  border-radius: var(--radius); padding: 7px 12px; font-size: 12.5px;
+  border: 1px solid transparent;
+}
+.warning.info { background: var(--accent-soft); border-color: var(--accent); }
+.warning.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.warning button { margin-left: 8px; }
+
+/* ---------- タブ ---------- */
+.tabs {
+  display: flex; gap: 2px; padding: 10px 16px 0; flex-wrap: wrap;
+  position: sticky; top: 0; background: var(--bg); z-index: 5;
+  border-bottom: 1px solid var(--line);
+}
+.tabs button {
+  border: 1px solid transparent; border-bottom: none; background: transparent;
+  border-radius: var(--radius) var(--radius) 0 0; color: var(--muted);
+  padding: 6px 12px; font-size: 13px;
+}
+.tabs button[aria-selected="true"] {
+  background: var(--panel-2); border-color: var(--line); color: var(--text);
+  margin-bottom: -1px; font-weight: 600;
+}
+.tabpanel { display: none; padding: 14px 16px 60px; }
+.tabpanel.active { display: block; }
+
+/* ---------- 図面 ---------- */
+.planbar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.planbar input[type="range"] { flex: 1; min-width: 140px; padding: 0; }
+.planbar .layer-label { font-size: 12.5px; white-space: nowrap; }
+.canvaswrap {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 8px; overflow: auto; margin-bottom: 10px;
+}
+canvas { display: block; max-width: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+.legend .sw-box { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+.readout { font-size: 12px; color: var(--muted); min-height: 1.7em; }
+.sec-head { font-size: 13px; font-weight: 600; margin: 16px 0 8px; display: flex; align-items: center; gap: 10px; }
+.sec-head select { padding: 2px 6px; font-size: 12px; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); }
+.stats b { color: var(--text); font-weight: 600; }
+
+/* ---------- 全レイヤー一覧 ---------- */
+.sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.sheet .tile {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 8px; text-align: center;
+}
+.sheet .tile .cap { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.sheet .tile canvas { margin: 0 auto; }
+
+/* ---------- テキスト出力 ---------- */
+.outbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+.outbar .path { flex: 1; font-size: 12.5px; color: var(--muted); }
+pre.code {
+  margin: 0; padding: 14px 16px;
+  background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: auto; max-height: 70vh; font-size: 12px; line-height: 1.5;
+  white-space: pre; word-break: normal;
+}
+
+.toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 8px 16px;
+  border-radius: 999px; font-size: 13px; opacity: 0; pointer-events: none;
+  transition: opacity .18s; z-index: 50;
+}
+.toast.show { opacity: 1; }
+
+#selftest { padding: 16px; background: var(--code-bg); font-size: 12px; white-space: pre-wrap; }
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; height: auto; }
+  .pane { overflow: visible; }
+  .pane.form { border-right: none; border-bottom: 1px solid var(--line); }
+  .tabs { position: static; }
+}
+
+/* 図面を紙に出すとき用。フォームとタブは落とす */
+@media print {
+  header, .pane.form, .tabs, .planbar, .toast, .outbar { display: none !important; }
+  main { display: block; height: auto; }
+  .pane.out { background: #fff; }
+  .canvaswrap, .sheet .tile { border-color: #999; }
+  .tabpanel { padding: 0; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>マイクラ建築図面ジェネレータ<span class="dot">.</span></h1>
+    <p class="sub">サイズを入れると、レイヤー（Y）ごとの平面図・立面図・コマンドが出ます — <a href="../">Claude Code 設定ジェネレータ</a></p>
+  </div>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button class="ghost" id="btn-share">図面 URL をコピー</button>
+    <button class="ghost" id="btn-print">印刷</button>
+    <button class="ghost" id="btn-reset">初期値に戻す</button>
+    <button class="ghost" id="btn-theme" title="テーマ切り替え">◐</button>
+  </div>
+</header>
+
+<main>
+  <!-- ================= 入力ペイン ================= -->
+  <section class="pane form">
+    <h2>形状</h2>
+    <div class="shapes" id="shapes"></div>
+    <p class="shape-desc" id="shape-desc"></p>
+
+    <div class="warnings" id="warnings"></div>
+
+    <fieldset>
+      <legend>寸法</legend>
+      <div id="params"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>コマンド出力に使うブロック</legend>
+      <div id="blocks"></div>
+    </fieldset>
+  </section>
+
+  <!-- ================= 図面ペイン ================= -->
+  <section class="pane out">
+    <div class="tabs" role="tablist">
+      <button data-tab="plan" role="tab" aria-selected="true">平面図</button>
+      <button data-tab="sheet" role="tab" aria-selected="false">全レイヤー</button>
+      <button data-tab="text" role="tab" aria-selected="false">テキスト</button>
+      <button data-tab="cmd" role="tab" aria-selected="false">コマンド</button>
+    </div>
+
+    <div class="tabpanel active" id="tab-plan">
+      <div class="planbar">
+        <button class="mini" id="btn-prev" title="下の段へ（←）">◀</button>
+        <input type="range" id="layer" min="0" max="0" value="0" aria-label="レイヤー">
+        <button class="mini" id="btn-next" title="上の段へ（→）">▶</button>
+        <span class="layer-label mono" id="layer-label"></span>
+      </div>
+      <div class="canvaswrap"><canvas id="plan"></canvas></div>
+      <p class="readout" id="readout">図面の上にカーソルを合わせると座標が出ます。← → キーで段を移動できます。</p>
+      <div class="legend" id="legend"></div>
+
+      <div class="sec-head">
+        立面図
+        <select id="elev-mode">
+          <option value="section">中心の断面</option>
+          <option value="project">全体の投影</option>
+        </select>
+      </div>
+      <div class="canvaswrap"><canvas id="elev"></canvas></div>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="tabpanel" id="tab-sheet">
+      <div class="stats" id="sheet-stats" style="margin-bottom:12px"></div>
+      <div class="sheet" id="sheet"></div>
+    </div>
+
+    <div class="tabpanel" id="tab-text">
+      <div class="outbar">
+        <span class="path mono">blueprint.txt</span>
+        <button class="mini" id="btn-copy-text">コピー</button>
+        <button class="mini" id="btn-dl-text">保存</button>
+      </div>
+      <pre class="code" id="text-out"></pre>
+    </div>
+
+    <div class="tabpanel" id="tab-cmd">
+      <div class="outbar">
+        <span class="path mono">build.mcfunction</span>
+        <button class="mini" id="btn-copy-cmd">コピー</button>
+        <button class="mini" id="btn-dl-cmd">保存</button>
+      </div>
+      <p class="hint" style="margin:0 0 10px">
+        座標はすべて相対（<code>~</code>）です。データパックの <code>data/&lt;名前空間&gt;/function/</code> に置いて、
+        建てたい場所で <code>/function &lt;名前空間&gt;:build</code> を実行してください。
+      </p>
+      <pre class="code" id="cmd-out"></pre>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------
+   1. 定数
+   ------------------------------------------------------------------ */
+
+const STORAGE_KEY = "mc-blueprint/v1";
+
+/** セルの種別。0 以外はすべて「ブロックが置かれている」を意味する */
+const K = { EMPTY: 0, BLOCK: 1, EDGE: 2, STAIR: 3, CORNER: 4, PILLAR: 5 };
+
+/**
+ * 向き。マイクラの座標系は +X = 東 / +Z = 南。
+ * 階段ブロックの facing は「上り方向」と一致する
+ * （facing=east の階段はモデルの高い側が +X 側にあり、西から東へ上る）。
+ */
+const DIR = { NONE: 0, NORTH: 1, EAST: 2, SOUTH: 3, WEST: 4 };
+const DIR_NAME = { 1: "north", 2: "east", 3: "south", 4: "west" };
+const DIR_ARROW = { 0: "#", 1: "^", 2: ">", 3: "v", 4: "<" };
+
+const MAX_R = 48;      // 半径の上限
+const MAX_H = 128;     // 高さの上限
+const MAX_SIDE = 128;  // 幅・奥行きの上限
+
+/* ------------------------------------------------------------------
+   2. state（唯一の真実）
+
+   フォームは state を書き換えるだけ。図面・テキスト・コマンドはすべて
+   state から純粋関数で作り直す。
+   ------------------------------------------------------------------ */
+
+function defaultState() {
+  return {
+    shape: "sphere",
+    // 半径系
+    rx: 9, ry: 9, rz: 9,
+    even: false,
+    hollow: true,
+    thickness: 1,
+    height: 12,
+    capBottom: false,
+    capTop: false,
+    // 屋根
+    width: 15, depth: 11, run: 1,
+    stairs: true, gableEnds: true,
+    // 螺旋階段
+    radius: 2, steps: 8, spinCw: true, pillar: true,
+    // アーチ
+    span: 11, rise: 5, archDepth: 1, archThickness: 1, legs: 3,
+    // コマンド出力
+    block: "minecraft:stone",
+    stairBlock: "minecraft:oak_stairs",
+  };
+}
+
+let state = defaultState();
+let layerIndex = 0;
+let elevMode = "section";
+let activeTab = "plan";
+
+/* ------------------------------------------------------------------
+   3. パラメータの定義
+
+   形状ごとに「どのフィールドを出すか」だけを持たせて、フォームは
+   この定義から機械的に組み立てる。
+   ------------------------------------------------------------------ */
+
+const FIELDS = {
+  rx:  { label: "半径 X", type: "int", min: 0, max: MAX_R },
+  ry:  { label: "半径 Y（高さ方向）", type: "int", min: 0, max: MAX_R },
+  rz:  { label: "半径 Z", type: "int", min: 0, max: MAX_R },
+  height: { label: "高さ（段数）", type: "int", min: 1, max: MAX_H },
+  even: { label: "偶数直径にする（中心が 2×2）", type: "bool" },
+  hollow: { label: "中を空洞にする", type: "bool" },
+  thickness: { label: "壁の厚み", type: "int", min: 1, max: 8, showIf: (s) => s.hollow },
+  capBottom: { label: "床を張る", type: "bool", showIf: (s) => s.hollow },
+  capTop: { label: "天井を張る", type: "bool", showIf: (s) => s.hollow },
+  width: { label: "幅 X", type: "int", min: 1, max: MAX_SIDE },
+  depth: { label: "奥行き Z", type: "int", min: 1, max: MAX_SIDE },
+  run: { label: "勾配（1 段上がるのに横 N ブロック）", type: "int", min: 1, max: 8 },
+  stairs: { label: "階段ブロックを使う", type: "bool" },
+  gableEnds: { label: "妻壁（両端の三角）を埋める", type: "bool" },
+  radius: { label: "半径", type: "int", min: 1, max: 24 },
+  steps: { label: "1 周あたりの段数", type: "int", min: 3, max: 64 },
+  spinCw: { label: "上から見て時計回り", type: "bool" },
+  pillar: { label: "中心に柱を立てる", type: "bool" },
+  span: { label: "開口の幅", type: "int", min: 1, max: 64 },
+  rise: { label: "開口の高さ（弧の部分）", type: "int", min: 1, max: MAX_R },
+  archDepth: { label: "奥行き Z", type: "int", min: 1, max: 32 },
+  archThickness: { label: "アーチの厚み", type: "int", min: 1, max: 8 },
+  legs: { label: "脚の高さ", type: "int", min: 0, max: 64 },
+};
+
+const SHAPES = {
+  cylinder: {
+    label: "円 / 楕円 / 円柱",
+    desc: "半径 X と半径 Z を変えると楕円になります。高さ 1 なら円の図面そのものです。「中を空洞にする」で壁だけ（＝円の輪郭）になります。",
+    fields: ["rx", "rz", "height", "even", "hollow", "thickness", "capBottom", "capTop"],
+    build: buildCylinder,
+  },
+  sphere: {
+    label: "球 / 楕円体",
+    desc: "半径を 3 方向それぞれ指定できます。空洞にすると殻だけになり、内側からも形が分かります。",
+    fields: ["rx", "ry", "rz", "even", "hollow", "thickness"],
+    build: (st) => buildSphere(st, false),
+  },
+  dome: {
+    label: "ドーム（半球）",
+    desc: "球の上半分。1 段目が赤道（いちばん広い層）です。床は張られません。",
+    fields: ["rx", "ry", "rz", "even", "hollow", "thickness"],
+    build: (st) => buildSphere(st, true),
+  },
+  cone: {
+    label: "円錐 / 尖塔",
+    desc: "底面の半径から頂点まで一定の割合で細くなります。塔の屋根に使えます。",
+    fields: ["rx", "rz", "height", "even", "hollow", "thickness"],
+    build: buildCone,
+  },
+  gable: {
+    label: "切妻屋根",
+    desc: "棟が Z 方向に走る、いちばん基本的な屋根。勾配 1 なら 1 段ごとに 1 ブロック内側へ入ります。",
+    fields: ["width", "depth", "run", "stairs", "gableEnds"],
+    build: buildGable,
+  },
+  hip: {
+    label: "寄棟屋根",
+    desc: "四方向すべてに勾配がつく屋根。角は隅棟（コーナー）になります。",
+    fields: ["width", "depth", "run", "stairs"],
+    build: buildHip,
+  },
+  shed: {
+    label: "片流れ屋根",
+    desc: "西から東へ一方向だけに流れる屋根。小屋や差し掛けに。",
+    fields: ["width", "depth", "run", "stairs"],
+    build: buildShed,
+  },
+  spiral: {
+    label: "螺旋階段",
+    desc: "1 段につき 1 ブロック上がります。段が飛ぶ組み合わせのときは、下に推奨の段数が出ます。",
+    fields: ["radius", "height", "steps", "spinCw", "pillar"],
+    build: buildSpiral,
+    elev: "project",   // 断面だと柱しか映らないので、既定を投影にする
+  },
+  arch: {
+    label: "アーチ / 橋の弧",
+    desc: "開口の幅と高さから半楕円の弧を出します。奥行きの分だけ同じ形が Z 方向に続きます。",
+    fields: ["span", "rise", "archDepth", "archThickness", "legs"],
+    build: buildArch,
+  },
+};
+
+/* ------------------------------------------------------------------
+   4. ボクセルの器
+
+   layers[y] は X-Z 平面のセル種別、dirs[y] は同じ位置の向き。
+   labelX0 / labelZ0 は「インデックス 0 が表示上どの座標か」。
+   ------------------------------------------------------------------ */
+
+function makeGrid(sx, sy, sz) {
+  const layers = [], dirs = [];
+  for (let y = 0; y < sy; y++) {
+    layers.push(new Uint8Array(sx * sz));
+    dirs.push(new Uint8Array(sx * sz));
+  }
+  return { sx, sy, sz, layers, dirs, labelX0: 0, labelZ0: 0 };
+}
+
+function gGet(g, x, y, z) {
+  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return K.EMPTY;
+  return g.layers[y][z * g.sx + x];
+}
+
+function gDir(g, x, y, z) {
+  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return DIR.NONE;
+  return g.dirs[y][z * g.sx + x];
+}
+
+function gSet(g, x, y, z, kind, dir) {
+  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return;
+  g.layers[y][z * g.sx + x] = kind;
+  if (dir != null) g.dirs[y][z * g.sx + x] = dir;
+}
+
+function countBlocks(g) {
+  let n = 0;
+  for (let y = 0; y < g.sy; y++) {
+    const a = g.layers[y];
+    for (let i = 0; i < a.length; i++) if (a[i]) n++;
+  }
+  return n;
+}
+
+function countLayer(g, y) {
+  if (y < 0 || y >= g.sy) return 0;
+  let n = 0;
+  const a = g.layers[y];
+  for (let i = 0; i < a.length; i++) if (a[i]) n++;
+  return n;
+}
+
+function countKind(g, kind) {
+  let n = 0;
+  for (let y = 0; y < g.sy; y++) {
+    const a = g.layers[y];
+    for (let i = 0; i < a.length; i++) if (a[i] === kind) n++;
+  }
+  return n;
+}
+
+/* ------------------------------------------------------------------
+   5. 形状生成（すべて state → グリッドの純粋関数）
+
+   円柱・球・ドーム・円錐は「内側かどうかを返す関数」を渡すだけで作れる。
+   空洞化は解析的な内側の式ではなく、6 近傍による収縮（erode）の差分で出す。
+   こうすると曲率が急なところでも穴が開かない。
+   ------------------------------------------------------------------ */
+
+function clampInt(v, lo, hi) {
+  const n = Math.floor(Number(v));
+  if (!isFinite(n)) return lo;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+/**
+ * solidFn(x,y,z) が真のセルを埋める。
+ * opts.hollow なら、収縮した集合との差（＝厚み opts.thickness の殻）だけを残す。
+ * opts.openBottom / openTop は「範囲外を中身とみなす」指定。
+ * ドームの底や円柱の上下に蓋ができるのを防ぐために使う。
+ */
+function fillSolid(g, solidFn, opts) {
+  const o = opts || {};
+  const { sx, sy, sz } = g;
+  const solid = [];
+  for (let y = 0; y < sy; y++) {
+    const a = new Uint8Array(sx * sz);
+    for (let z = 0; z < sz; z++) {
+      for (let x = 0; x < sx; x++) if (solidFn(x, y, z)) a[z * sx + x] = 1;
+    }
+    solid.push(a);
+  }
+
+  let keep = solid;
+  if (o.hollow) {
+    const t = clampInt(o.thickness == null ? 1 : o.thickness, 1, 8);
+    let inner = solid;
+    for (let i = 0; i < t; i++) inner = erode(inner, sx, sy, sz, o);
+    keep = solid.map((a, y) => {
+      const out = new Uint8Array(sx * sz);
+      for (let i = 0; i < a.length; i++) out[i] = a[i] && !inner[y][i] ? 1 : 0;
+      return out;
+    });
+  }
+
+  for (let y = 0; y < sy; y++) {
+    for (let i = 0; i < keep[y].length; i++) if (keep[y][i]) g.layers[y][i] = K.BLOCK;
+  }
+}
+
+/** 6 近傍がすべて中身のセルだけを残す（＝1 層分の収縮） */
+function erode(vol, sx, sy, sz, o) {
+  const at = (x, y, z) => {
+    if (y < 0) return o.openBottom ? 1 : 0;
+    if (y >= sy) return o.openTop ? 1 : 0;
+    if (x < 0 || z < 0 || x >= sx || z >= sz) return 0;
+    return vol[y][z * sx + x];
+  };
+  const out = [];
+  for (let y = 0; y < sy; y++) {
+    const a = new Uint8Array(sx * sz);
+    for (let z = 0; z < sz; z++) {
+      for (let x = 0; x < sx; x++) {
+        if (!vol[y][z * sx + x]) continue;
+        if (at(x - 1, y, z) && at(x + 1, y, z) && at(x, y, z - 1) &&
+            at(x, y, z + 1) && at(x, y - 1, z) && at(x, y + 1, z)) a[z * sx + x] = 1;
+      }
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/** その層で外側に face を持つブロックを輪郭にする。図面の読みやすさのためだけの区別 */
+function markEdges(g) {
+  for (let y = 0; y < g.sy; y++) {
+    const src = g.layers[y].slice();
+    const at = (x, z) => (x < 0 || z < 0 || x >= g.sx || z >= g.sz) ? 0 : src[z * g.sx + x];
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (src[z * g.sx + x] !== K.BLOCK) continue;
+        if (!at(x - 1, z) || !at(x + 1, z) || !at(x, z - 1) || !at(x, z + 1)) {
+          g.layers[y][z * g.sx + x] = K.EDGE;
+        }
+      }
+    }
+  }
+}
+
+/** 半径 r から「セル数」と「半軸」を出す。奇数直径は中心がブロック、偶数直径は中心が境界 */
+function axisOf(r, even) {
+  const n = even ? 2 * r : 2 * r + 1;
+  const semi = even ? r : r + 0.5;
+  return { n, semi, center: (n - 1) / 2 };
+}
+
+function buildCylinder(st) {
+  const rx = clampInt(st.rx, 0, MAX_R), rz = clampInt(st.rz, 0, MAX_R);
+  const even = !!st.even;
+  const h = clampInt(st.height, 1, MAX_H);
+  const X = axisOf(rx, even), Z = axisOf(rz, even);
+  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+
+  const g = makeGrid(X.n, h, Z.n);
+  g.labelX0 = -rx; g.labelZ0 = -rz;
+  fillSolid(g, (x, y, z) => {
+    const dx = (x - X.center) / X.semi, dz = (z - Z.center) / Z.semi;
+    return dx * dx + dz * dz <= 1;
+  }, { hollow: st.hollow, thickness: st.thickness, openBottom: !st.capBottom, openTop: !st.capTop });
+  markEdges(g);
+  return g;
+}
+
+function buildSphere(st, dome) {
+  const rx = clampInt(st.rx, 0, MAX_R), ry = clampInt(st.ry, 0, MAX_R), rz = clampInt(st.rz, 0, MAX_R);
+  const even = !!st.even;
+  const X = axisOf(rx, even), Y = axisOf(ry, even), Z = axisOf(rz, even);
+  if (X.n < 1 || Y.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+
+  const y0 = dome ? Math.ceil(Y.center) : 0;
+  const sy = Y.n - y0;
+  const g = makeGrid(X.n, sy, Z.n);
+  g.labelX0 = -rx; g.labelZ0 = -rz;
+  fillSolid(g, (x, y, z) => {
+    const dx = (x - X.center) / X.semi;
+    const dy = (y + y0 - Y.center) / Y.semi;
+    const dz = (z - Z.center) / Z.semi;
+    return dx * dx + dy * dy + dz * dz <= 1;
+  }, { hollow: st.hollow, thickness: st.thickness, openBottom: dome, openTop: false });
+  markEdges(g);
+  return g;
+}
+
+function buildCone(st) {
+  const rx = clampInt(st.rx, 0, MAX_R), rz = clampInt(st.rz, 0, MAX_R);
+  const even = !!st.even;
+  const h = clampInt(st.height, 1, MAX_H);
+  const X = axisOf(rx, even), Z = axisOf(rz, even);
+  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+
+  const g = makeGrid(X.n, h, Z.n);
+  g.labelX0 = -rx; g.labelZ0 = -rz;
+  // 層ごとの半径は整数に丸めてから円にする。中途半端な半径のまま描くと、
+  // 途中の層で 1 マス幅のとげが出る。丸めると、どの層も普通の円になる
+  // （同じ半径が 2 段続くことがあるが、それは実際に積む形と同じ）。
+  const semiAt = (r, f) => {
+    const rr = Math.round(r * f);
+    return even ? Math.max(rr, 1) : rr + 0.5;
+  };
+  fillSolid(g, (x, y, z) => {
+    const f = h > 1 ? (h - 1 - y) / (h - 1) : 1;
+    const ax = semiAt(rx, f), az = semiAt(rz, f);
+    const dx = (x - X.center) / ax, dz = (z - Z.center) / az;
+    return dx * dx + dz * dz <= 1;
+  }, { hollow: st.hollow, thickness: st.thickness, openBottom: true, openTop: false });
+  markEdges(g);
+  return g;
+}
+
+/**
+ * 切妻屋根。棟は Z 方向に走る。
+ * 層 y では、西の斜面が x ∈ [a, b]、東の斜面がその左右反転。a = y * 勾配。
+ * 勾配が 2 以上のときは、いちばん内側のセルだけを階段ブロックにする。
+ */
+function buildGable(st) {
+  const w = clampInt(st.width, 1, MAX_SIDE), d = clampInt(st.depth, 1, MAX_SIDE);
+  const run = clampInt(st.run, 1, 8);
+  const rows = [];
+  for (let y = 0; ; y++) {
+    const a = y * run;
+    if (a > w - 1 - a) break;
+    rows.push(a);
+    if (rows.length > MAX_H) break;
+  }
+  if (!rows.length) rows.push(0);
+
+  const g = makeGrid(w, rows.length, d);
+  for (let y = 0; y < rows.length; y++) {
+    const a = rows[y], b = Math.min(a + run - 1, Math.floor((w - 1) / 2));
+    for (let x = a; x <= b; x++) {
+      const mx = w - 1 - x;                              // 東側の対称位置
+      const inner = (x === b);                           // その帯のいちばん内側
+      const kind = (st.stairs && inner) ? K.STAIR : K.BLOCK;
+      for (let z = 0; z < d; z++) {
+        if (x === mx) {
+          gSet(g, x, y, z, K.BLOCK, DIR.NONE);           // 棟が 1 列に重なった
+        } else {
+          gSet(g, x, y, z, kind, kind === K.STAIR ? DIR.EAST : DIR.NONE);
+          gSet(g, mx, y, z, kind, kind === K.STAIR ? DIR.WEST : DIR.NONE);
+        }
+      }
+    }
+    if (st.gableEnds) {
+      for (let x = b + 1; x <= w - 2 - b; x++) {
+        if (!gGet(g, x, y, 0)) gSet(g, x, y, 0, K.BLOCK, DIR.NONE);
+        if (!gGet(g, x, y, d - 1)) gSet(g, x, y, d - 1, K.BLOCK, DIR.NONE);
+      }
+    }
+  }
+  return g;
+}
+
+/** 寄棟屋根。四辺からの距離の最小値が、その層の帯に入っているセルを置く */
+function buildHip(st) {
+  const w = clampInt(st.width, 1, MAX_SIDE), d = clampInt(st.depth, 1, MAX_SIDE);
+  const run = clampInt(st.run, 1, 8);
+  const maxInset = Math.floor(Math.min(w - 1, d - 1) / 2);
+  const sy = Math.min(MAX_H, Math.floor(maxInset / run) + 1);
+
+  const g = makeGrid(w, sy, d);
+  for (let y = 0; y < sy; y++) {
+    const a = y * run, b = a + run - 1;
+    for (let z = 0; z < d; z++) {
+      for (let x = 0; x < w; x++) {
+        const dw = x, de = w - 1 - x, dn = z, ds = d - 1 - z;
+        const m = Math.min(dw, de, dn, ds);
+        if (m < a || m > b) continue;
+        const xHit = (dw === m) || (de === m);
+        const zHit = (dn === m) || (ds === m);
+        if (xHit && zHit) {
+          // X 側と Z 側の斜面が出会う＝隅棟
+          gSet(g, x, y, z, K.CORNER, DIR.NONE);
+        } else if ((dw === m && de === m) || (dn === m && ds === m)) {
+          // 向かい合う斜面が出会う＝大棟。ここは階段にしない
+          gSet(g, x, y, z, K.BLOCK, DIR.NONE);
+        } else {
+          const dir = dw === m ? DIR.EAST      // 西の辺 → 東へ上る
+                    : de === m ? DIR.WEST
+                    : dn === m ? DIR.SOUTH     // 北の辺 → 南へ上る
+                    : DIR.NORTH;
+          gSet(g, x, y, z, (st.stairs && m === b) ? K.STAIR : K.BLOCK, st.stairs && m === b ? dir : DIR.NONE);
+        }
+      }
+    }
+  }
+  return g;
+}
+
+/** 片流れ屋根。西から東へ一方向だけ上る */
+function buildShed(st) {
+  const w = clampInt(st.width, 1, MAX_SIDE), d = clampInt(st.depth, 1, MAX_SIDE);
+  const run = clampInt(st.run, 1, 8);
+  const sy = Math.min(MAX_H, Math.ceil(w / run));
+
+  const g = makeGrid(w, sy, d);
+  for (let y = 0; y < sy; y++) {
+    const a = y * run, b = Math.min(a + run - 1, w - 1);
+    for (let x = a; x <= b; x++) {
+      const kind = (st.stairs && x === b) ? K.STAIR : K.BLOCK;
+      for (let z = 0; z < d; z++) gSet(g, x, y, z, kind, kind === K.STAIR ? DIR.EAST : DIR.NONE);
+    }
+  }
+  return g;
+}
+
+/** 螺旋階段の各段の座標。図面と警告の両方から使う */
+function spiralSteps(st) {
+  const r = clampInt(st.radius, 1, 24);
+  const h = clampInt(st.height, 1, MAX_H);
+  const n = clampInt(st.steps, 3, 64);
+  const sign = st.spinCw ? -1 : 1;
+  const c = r;
+  const out = [];
+  for (let y = 0; y < h; y++) {
+    const th = sign * (2 * Math.PI * y / n);
+    out.push({
+      y,
+      x: Math.round(c + r * Math.cos(th)),
+      z: Math.round(c + r * Math.sin(th)),
+      tx: -Math.sin(th) * sign,   // 接線（進行方向）
+      tz: Math.cos(th) * sign,
+    });
+  }
+  return out;
+}
+
+function dirFromDelta(dx, dz, tx, tz) {
+  if (dx === 0 && dz === 0) return DIR.NONE;
+  if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? DIR.EAST : DIR.WEST;
+  if (Math.abs(dz) > Math.abs(dx)) return dz > 0 ? DIR.SOUTH : DIR.NORTH;
+  // 斜めに進むときは接線の強い方の軸に寄せる
+  if (Math.abs(tx) >= Math.abs(tz)) return dx > 0 ? DIR.EAST : DIR.WEST;
+  return dz > 0 ? DIR.SOUTH : DIR.NORTH;
+}
+
+function buildSpiral(st) {
+  const r = clampInt(st.radius, 1, 24);
+  const h = clampInt(st.height, 1, MAX_H);
+  const steps = spiralSteps(st);
+  const g = makeGrid(2 * r + 1, h, 2 * r + 1);
+  g.labelX0 = -r; g.labelZ0 = -r;
+
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i], nx = steps[i + 1];
+    const dir = nx ? dirFromDelta(nx.x - s.x, nx.z - s.z, s.tx, s.tz)
+                   : dirFromDelta(Math.round(s.tx), Math.round(s.tz), s.tx, s.tz);
+    gSet(g, s.x, s.y, s.z, K.STAIR, dir);
+    if (st.pillar && gGet(g, r, s.y, r) === K.EMPTY) gSet(g, r, s.y, r, K.PILLAR, DIR.NONE);
+  }
+  return g;
+}
+
+/** X-Y 平面で 1 マス分ふくらませる（アーチの輪を作るのに使う） */
+function dilate2d(a, w, hgt) {
+  const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= hgt) ? 0 : a[y * w + x];
+  const out = new Uint8Array(w * hgt);
+  for (let y = 0; y < hgt; y++) {
+    for (let x = 0; x < w; x++) {
+      if (a[y * w + x] || at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1)) out[y * w + x] = 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * アーチ。開口（通り抜けるほう）を半楕円で作り、それを厚みの分だけ
+ * ふくらませた差を輪にする。楕円を 2 つ引き算するやり方だと頂部の厚みが
+ * 一定にならず、輪が閉じないことがある。
+ * 脚の高さの分だけ、両側の柱をまっすぐ下ろす。
+ */
+function buildArch(st) {
+  const span = clampInt(st.span, 1, 64);
+  const rise = clampInt(st.rise, 1, MAX_R);
+  const d = clampInt(st.archDepth, 1, 32);
+  const t = clampInt(st.archThickness, 1, 8);
+  const legs = clampInt(st.legs, 0, 64);
+
+  const sx = span + 2 * t;
+  const archH = rise + t + 1;                       // 輪が閉じるまでに要る高さ
+  const sy = Math.min(MAX_H, legs + archH);
+  const g = makeGrid(sx, sy, d);
+  g.labelX0 = -Math.floor(sx / 2); g.labelZ0 = 0;
+
+  const cx = (sx - 1) / 2;
+  const open = new Uint8Array(sx * archH);
+  for (let dy = 0; dy < archH; dy++) {
+    for (let x = 0; x < sx; x++) {
+      const u = (x - cx) / (span / 2), v = dy / rise;
+      if (u * u + v * v <= 1) open[dy * sx + x] = 1;
+    }
+  }
+  let outer = open;
+  for (let i = 0; i < t; i++) outer = dilate2d(outer, sx, archH);
+
+  for (let dy = 0; dy < archH; dy++) {
+    const y = legs + dy;
+    if (y >= sy) break;
+    for (let x = 0; x < sx; x++) {
+      if (!outer[dy * sx + x] || open[dy * sx + x]) continue;
+      for (let z = 0; z < d; z++) gSet(g, x, y, z, K.BLOCK, DIR.NONE);
+    }
+  }
+  for (let y = 0; y < legs; y++) {
+    for (let x = 0; x < sx; x++) {
+      if (x >= t && x < t + span) continue;
+      for (let z = 0; z < d; z++) gSet(g, x, y, z, K.BLOCK, DIR.NONE);
+    }
+  }
+  markEdges(g);
+  return g;
+}
+
+/** state から図面を作る。ここが唯一の入口 */
+function build(st) {
+  const shape = SHAPES[st.shape] ? st.shape : "sphere";
+  return SHAPES[shape].build(st);
+}
+
+/* ------------------------------------------------------------------
+   6. 警告（ガイドと同じく、その場で気づけるものだけ出す）
+   ------------------------------------------------------------------ */
+
+function computeWarnings(st, g) {
+  const out = [];
+  const total = countBlocks(g);
+
+  if (st.shape === "spiral") {
+    const steps = spiralSteps(st);
+    let gap = 0;
+    for (let i = 1; i < steps.length; i++) {
+      const dx = steps[i].x - steps[i - 1].x, dz = steps[i].z - steps[i - 1].z;
+      gap = Math.max(gap, Math.max(Math.abs(dx), Math.abs(dz)));
+    }
+    if (gap > 1) {
+      const best = recommendSteps(st);
+      out.push({
+        level: "warn",
+        msg: "段と段が離れていて登れません（最大 " + gap + " ブロック）。",
+        fix: best ? { label: "1 周 " + best + " 段にする", apply: () => { state.steps = best; } } : null,
+      });
+    }
+  }
+
+  if (st.hollow && (st.shape === "sphere" || st.shape === "dome" || st.shape === "cylinder" || st.shape === "cone")) {
+    const t = clampInt(st.thickness, 1, 8);
+    const minR = Math.min(clampInt(st.rx, 0, MAX_R), clampInt(st.rz, 0, MAX_R));
+    if (t >= minR) out.push({ level: "info", msg: "壁の厚みが半径以上なので、実質すべて詰まった形になります。" });
+  }
+
+  if (st.even && (st.shape === "sphere" || st.shape === "dome" || st.shape === "cylinder" || st.shape === "cone")) {
+    out.push({ level: "info", msg: "偶数直径なので中心にブロックは来ません（中心が 2×2 の境目になります）。" });
+  }
+
+  if ((st.shape === "gable") && clampInt(st.width, 1, MAX_SIDE) % 2 === 0) {
+    out.push({ level: "info", msg: "幅が偶数なので、棟が 2 列になります。1 列にしたい場合は幅を奇数にしてください。" });
+  }
+
+  if (total > 20000) {
+    out.push({ level: "warn", msg: "総ブロック数が " + total.toLocaleString() + " です。コマンド出力がかなり長くなります。" });
+  }
+  if (Math.max(g.sx, g.sy, g.sz) > 96) {
+    out.push({ level: "warn", msg: "図面が大きいため、描画に時間がかかることがあります。" });
+  }
+  return out;
+}
+
+/** 段が飛ばなくなる最小の「1 周あたりの段数」を探す */
+function recommendSteps(st) {
+  for (let n = 4; n <= 64; n++) {
+    const steps = spiralSteps(Object.assign({}, st, { steps: n, height: Math.max(n + 1, 8) }));
+    let ok = true;
+    for (let i = 1; i < steps.length; i++) {
+      const dx = steps[i].x - steps[i - 1].x, dz = steps[i].z - steps[i - 1].z;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) > 1 || (dx === 0 && dz === 0)) { ok = false; break; }
+    }
+    if (ok) return n;
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------
+   7. テキスト・コマンド出力（グリッド → 文字列の純粋関数）
+   ------------------------------------------------------------------ */
+
+function shapeSummary(st) {
+  const s = SHAPES[st.shape] ? st.shape : "sphere";
+  const f = SHAPES[s].fields;
+  const parts = f.filter((k) => FIELDS[k].type === "int").map((k) => FIELDS[k].label + "=" + st[k]);
+  const flags = f.filter((k) => FIELDS[k].type === "bool" && st[k]).map((k) => FIELDS[k].label);
+  return SHAPES[s].label + "  " + parts.join(" / ") + (flags.length ? "  [" + flags.join(", ") + "]" : "");
+}
+
+function cellChar(kind, dir) {
+  if (kind === K.EMPTY) return ".";
+  if (kind === K.STAIR) return DIR_ARROW[dir] || "#";
+  if (kind === K.PILLAR) return "|";
+  if (kind === K.CORNER) return "+";
+  return "#";
+}
+
+function buildText(st, g) {
+  const lines = [];
+  lines.push("# マイクラ図面: " + shapeSummary(st));
+  lines.push("# 寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）  総ブロック数 " + countBlocks(g));
+  lines.push("# X は左から右（西→東）、Z は上から下（北→南）。左上のセルが x=" + g.labelX0 + ", z=" + g.labelZ0);
+  lines.push("# 凡例  # ブロック  ^ > v < 階段（矢印は上り方向）  + 隅棟  | 柱  . 空");
+  lines.push("");
+  for (let y = 0; y < g.sy; y++) {
+    lines.push("## " + (y + 1) + " 段目 / 全 " + g.sy + " 段   ブロック " + countLayer(g, y));
+    for (let z = 0; z < g.sz; z++) {
+      let row = "";
+      for (let x = 0; x < g.sx; x++) row += cellChar(gGet(g, x, y, z), gDir(g, x, y, z));
+      lines.push(row);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function buildCommands(st, g) {
+  const block = (st.block || "minecraft:stone").trim() || "minecraft:stone";
+  const stairBlock = (st.stairBlock || "minecraft:oak_stairs").trim() || "minecraft:oak_stairs";
+  const lines = [];
+  lines.push("# マイクラ図面: " + shapeSummary(st));
+  lines.push("# 実行位置が原点。~ は相対座標なので、建てたい場所で実行してください。");
+  lines.push("# 総ブロック数 " + countBlocks(g));
+  for (let y = 0; y < g.sy; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        const kind = gGet(g, x, y, z);
+        if (!kind) continue;
+        const dir = gDir(g, x, y, z);
+        const name = (kind === K.STAIR && DIR_NAME[dir])
+          ? stairBlock + "[facing=" + DIR_NAME[dir] + "]"
+          : block;
+        lines.push("setblock ~" + (x + g.labelX0) + " ~" + y + " ~" + (z + g.labelZ0) + " " + name);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+/* ------------------------------------------------------------------
+   8. DOM ヘルパー
+   ------------------------------------------------------------------ */
+
+const $ = (sel) => document.querySelector(sel);
+
+function h(tag, props, children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") el.className = v;
+    else if (k === "text") el.textContent = v;
+    else if (k === "html") el.innerHTML = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const c of children || []) if (c) el.appendChild(c);
+  return el;
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1600);
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(label + "をコピーしました");
+  } catch (e) {
+    toast("コピーできませんでした");
+  }
+}
+
+/* ------------------------------------------------------------------
+   9. フォームの描画
+   ------------------------------------------------------------------ */
+
+function renderShapes() {
+  const wrap = $("#shapes");
+  wrap.textContent = "";
+  for (const [key, def] of Object.entries(SHAPES)) {
+    wrap.appendChild(h("button", {
+      type: "button",
+      "aria-pressed": String(state.shape === key),
+      text: def.label,
+      onclick: () => { state.shape = key; layerIndex = 0; syncElevMode(); renderAll(); },
+    }));
+  }
+  $("#shape-desc").textContent = SHAPES[state.shape].desc;
+}
+
+/** 形状ごとに見やすい立面図の見せ方が違うので、切り替え時に既定へ戻す */
+function syncElevMode() {
+  elevMode = SHAPES[state.shape].elev || "section";
+  const sel = $("#elev-mode");
+  if (sel) sel.value = elevMode;
+}
+
+function renderParams() {
+  const wrap = $("#params");
+  wrap.textContent = "";
+  const def = SHAPES[state.shape];
+  const shown = def.fields.filter((k) => !FIELDS[k].showIf || FIELDS[k].showIf(state));
+  const nums = shown.filter((k) => FIELDS[k].type === "int");
+  const bools = shown.filter((k) => FIELDS[k].type === "bool");
+
+  const grid = h("div", { class: "grid2" });
+  for (const key of nums) {
+    const f = FIELDS[key];
+    const input = h("input", {
+      type: "number", min: f.min, max: f.max, value: state[key], id: "f-" + key,
+      oninput: (e) => {
+        state[key] = clampInt(e.target.value, f.min, f.max);
+        renderOutputs();
+      },
+    });
+    grid.appendChild(h("div", { class: "field" }, [h("label", { for: "f-" + key, text: f.label }), input]));
+  }
+  wrap.appendChild(grid);
+
+  for (const key of bools) {
+    const f = FIELDS[key];
+    const id = "f-" + key;
+    wrap.appendChild(h("div", { class: "sw" }, [
+      h("input", {
+        type: "checkbox", id, checked: !!state[key],
+        onchange: (e) => { state[key] = e.target.checked; renderAll(); },
+      }),
+      h("label", { for: id, text: f.label }),
+    ]));
+  }
+}
+
+function renderBlocks() {
+  const wrap = $("#blocks");
+  wrap.textContent = "";
+  const mk = (key, label, hint) => h("div", { class: "field" }, [
+    h("label", { for: "f-" + key, text: label }),
+    h("input", {
+      type: "text", id: "f-" + key, value: state[key],
+      oninput: (e) => { state[key] = e.target.value; renderOutputs(); },
+    }),
+    hint ? h("p", { class: "hint", text: hint }) : null,
+  ]);
+  wrap.appendChild(mk("block", "ブロック", "例: minecraft:stone_bricks"));
+  wrap.appendChild(mk("stairBlock", "階段ブロック", "階段が出る形状のときだけ使われます"));
+}
+
+function renderWarnings(warns) {
+  const wrap = $("#warnings");
+  wrap.textContent = "";
+  for (const w of warns) {
+    const el = h("div", { class: "warning " + w.level }, [h("span", { text: w.msg })]);
+    if (w.fix) {
+      el.appendChild(h("button", {
+        class: "mini", text: w.fix.label,
+        onclick: () => { w.fix.apply(); renderAll(); },
+      }));
+    }
+    wrap.appendChild(el);
+  }
+}
+
+/* ------------------------------------------------------------------
+   10. 図面の描画
+   ------------------------------------------------------------------ */
+
+function kindColor(kind) {
+  switch (kind) {
+    case K.EDGE: return cssVar("--cell-edge");
+    case K.STAIR: return cssVar("--cell-stair");
+    case K.CORNER: return cssVar("--cell-corner");
+    case K.PILLAR: return cssVar("--cell-pillar");
+    default: return cssVar("--cell");
+  }
+}
+
+/** 平面図。cell はセルの一辺（px）、gutter は座標目盛りの帯 */
+function drawPlan(canvas, g, y, opts) {
+  const o = opts || {};
+  const cell = o.cell || 18;
+  const gutter = o.gutter == null ? 24 : o.gutter;
+  const dpr = window.devicePixelRatio || 1;
+  const w = gutter + g.sx * cell + 1, hgt = gutter + g.sz * cell + 1;
+
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + "px";
+  canvas.style.height = hgt + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, hgt);
+
+  // 一つ下の段をゴーストで敷く（積むときの位置合わせ用）
+  if (o.ghost && y > 0) {
+    ctx.fillStyle = cssVar("--ghost");
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!gGet(g, x, y - 1, z)) continue;
+        ctx.fillRect(gutter + x * cell, gutter + z * cell, cell, cell);
+      }
+    }
+  }
+
+  // セル本体
+  for (let z = 0; z < g.sz; z++) {
+    for (let x = 0; x < g.sx; x++) {
+      const kind = gGet(g, x, y, z);
+      if (!kind) continue;
+      ctx.fillStyle = kindColor(kind);
+      ctx.fillRect(gutter + x * cell, gutter + z * cell, cell, cell);
+      const dir = gDir(g, x, y, z);
+      if (kind === K.STAIR && dir && cell >= 10) drawArrow(ctx, gutter + x * cell, gutter + z * cell, cell, dir);
+    }
+  }
+
+  // 格子。5 マスごとに濃くする
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= g.sx; x++) {
+    ctx.strokeStyle = (x % 5 === 0) ? cssVar("--grid-major") : cssVar("--grid");
+    line(ctx, gutter + x * cell + 0.5, gutter, gutter + x * cell + 0.5, gutter + g.sz * cell);
+  }
+  for (let z = 0; z <= g.sz; z++) {
+    ctx.strokeStyle = (z % 5 === 0) ? cssVar("--grid-major") : cssVar("--grid");
+    line(ctx, gutter, gutter + z * cell + 0.5, gutter + g.sx * cell, gutter + z * cell + 0.5);
+  }
+
+  if (gutter > 0) drawRulers(ctx, g, cell, gutter);
+}
+
+function line(ctx, x1, y1, x2, y2) {
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+function drawArrow(ctx, px, py, cell, dir) {
+  const cx = px + cell / 2, cy = py + cell / 2, r = cell * 0.28;
+  const ang = { 1: -Math.PI / 2, 2: 0, 3: Math.PI / 2, 4: Math.PI }[dir] || 0;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang);
+  ctx.fillStyle = cssVar("--panel");
+  ctx.beginPath();
+  ctx.moveTo(r, 0); ctx.lineTo(-r * 0.8, r * 0.8); ctx.lineTo(-r * 0.8, -r * 0.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawRulers(ctx, g, cell, gutter) {
+  ctx.fillStyle = cssVar("--muted");
+  ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const stepX = cell >= 16 ? 1 : (cell >= 9 ? 2 : 5);
+  for (let x = 0; x < g.sx; x++) {
+    const v = x + g.labelX0;
+    if (x % stepX !== 0 && x !== g.sx - 1) continue;
+    ctx.fillText(String(v), gutter + x * cell + cell / 2, gutter / 2);
+  }
+  ctx.textAlign = "right";
+  for (let z = 0; z < g.sz; z++) {
+    const v = z + g.labelZ0;
+    if (z % stepX !== 0 && z !== g.sz - 1) continue;
+    ctx.fillText(String(v), gutter - 4, gutter + z * cell + cell / 2);
+  }
+  ctx.textAlign = "left";
+  ctx.fillText("x→", 2, gutter / 2);
+}
+
+/**
+ * 立面図。断面は中央の z を切った面、投影はどこかにブロックがあれば塗る。
+ * 下の段が図の下に来るように、Y を反転して描く。
+ */
+function drawElevation(canvas, g, mode) {
+  const cell = Math.max(4, Math.min(14, Math.floor(560 / Math.max(g.sx, 1))));
+  const gutter = 24;
+  const dpr = window.devicePixelRatio || 1;
+  const w = gutter + g.sx * cell + 1, hgt = gutter / 2 + g.sy * cell + 1;
+
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + "px";
+  canvas.style.height = hgt + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, hgt);
+
+  const zc = Math.floor((g.sz - 1) / 2);
+  for (let y = 0; y < g.sy; y++) {
+    const py = (g.sy - 1 - y) * cell;
+    for (let x = 0; x < g.sx; x++) {
+      let kind = K.EMPTY;
+      if (mode === "section") {
+        kind = gGet(g, x, y, zc);
+      } else {
+        for (let z = 0; z < g.sz; z++) {
+          const k = gGet(g, x, y, z);
+          if (k) { kind = (kind && kind !== k) ? K.BLOCK : k; if (k === K.EDGE) break; }
+        }
+      }
+      if (!kind) continue;
+      ctx.fillStyle = kindColor(kind);
+      ctx.fillRect(gutter + x * cell, py, cell, cell);
+    }
+  }
+
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= g.sx; x++) {
+    ctx.strokeStyle = (x % 5 === 0) ? cssVar("--grid-major") : cssVar("--grid");
+    line(ctx, gutter + x * cell + 0.5, 0, gutter + x * cell + 0.5, g.sy * cell);
+  }
+  for (let y = 0; y <= g.sy; y++) {
+    ctx.strokeStyle = (y % 5 === 0) ? cssVar("--grid-major") : cssVar("--grid");
+    line(ctx, gutter, y * cell + 0.5, gutter + g.sx * cell, y * cell + 0.5);
+  }
+
+  ctx.fillStyle = cssVar("--muted");
+  ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  const stepY = cell >= 12 ? 1 : (cell >= 7 ? 2 : 5);
+  for (let y = 0; y < g.sy; y++) {
+    if (y % stepY !== 0 && y !== g.sy - 1) continue;
+    ctx.fillText(String(y + 1), gutter - 4, (g.sy - 1 - y) * cell + cell / 2);
+  }
+  ctx.textAlign = "left";
+  ctx.fillText("y↑", 2, g.sy * cell + gutter / 4);
+}
+
+function renderLegend(g) {
+  const wrap = $("#legend");
+  wrap.textContent = "";
+  const items = [{ c: "--cell", t: "ブロック" }];
+  if (countKind(g, K.EDGE)) items.push({ c: "--cell-edge", t: "輪郭（外側に面しているブロック）" });
+  if (countKind(g, K.STAIR)) items.push({ c: "--cell-stair", t: "階段ブロック（矢印＝上り方向＝facing）" });
+  if (countKind(g, K.CORNER)) items.push({ c: "--cell-corner", t: "隅棟（コーナー）" });
+  if (countKind(g, K.PILLAR)) items.push({ c: "--cell-pillar", t: "柱" });
+  items.push({ c: "--ghost", t: "一つ下の段" });
+  for (const it of items) {
+    wrap.appendChild(h("span", {}, [
+      h("span", { class: "sw-box", style: "background:" + cssVar(it.c) }),
+      h("span", { text: it.t }),
+    ]));
+  }
+}
+
+function planCellSize(g) {
+  const avail = Math.max(260, ($("#tab-plan").clientWidth || 700) - 60);
+  return Math.max(6, Math.min(26, Math.floor((avail - 24) / Math.max(g.sx, 1))));
+}
+
+function renderSheet(g) {
+  const wrap = $("#sheet");
+  wrap.textContent = "";
+  const cell = Math.max(3, Math.min(9, Math.floor(150 / Math.max(g.sx, 1))));
+  for (let y = 0; y < g.sy; y++) {
+    const canvas = h("canvas", {});
+    const tile = h("div", { class: "tile" }, [
+      canvas,
+      h("div", { class: "cap", text: (y + 1) + " 段目 ／ " + countLayer(g, y) + " ブロック" }),
+    ]);
+    wrap.appendChild(tile);
+    drawPlan(canvas, g, y, { cell, gutter: 0, ghost: false });
+  }
+  $("#sheet-stats").textContent =
+    "全 " + g.sy + " 段  /  総ブロック数 " + countBlocks(g).toLocaleString() +
+    "  /  下から順に積んでください";
+}
+
+/* ------------------------------------------------------------------
+   11. 全体の描き直し
+   ------------------------------------------------------------------ */
+
+let currentGrid = null;
+
+function renderOutputs() {
+  const g = build(state);
+  currentGrid = g;
+  if (layerIndex >= g.sy) layerIndex = g.sy - 1;
+  if (layerIndex < 0) layerIndex = 0;
+
+  renderWarnings(computeWarnings(state, g));
+
+  const slider = $("#layer");
+  slider.max = String(Math.max(0, g.sy - 1));
+  slider.value = String(layerIndex);
+  $("#layer-label").textContent = (layerIndex + 1) + " 段目 / 全 " + g.sy + " 段";
+
+  drawPlan($("#plan"), g, layerIndex, { cell: planCellSize(g), ghost: true });
+  drawElevation($("#elev"), g, elevMode);
+  renderLegend(g);
+
+  $("#stats").textContent =
+    "寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）  /  " +
+    "総ブロック数 " + countBlocks(g).toLocaleString() + "  /  " +
+    "この段 " + countLayer(g, layerIndex).toLocaleString() +
+    (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "");
+
+  if (activeTab === "sheet") renderSheet(g);
+  if (activeTab === "text") $("#text-out").textContent = buildText(state, g);
+  if (activeTab === "cmd") $("#cmd-out").textContent = buildCommands(state, g);
+
+  save();
+}
+
+function renderAll() {
+  renderShapes();
+  renderParams();
+  renderBlocks();
+  renderOutputs();
+}
+
+/* ------------------------------------------------------------------
+   12. 保存・復元・URL
+   ------------------------------------------------------------------ */
+
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 無視 */ }
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    state = Object.assign(defaultState(), saved);
+  } catch (e) { /* 壊れていたら初期値のまま */ }
+}
+
+/** ?shape=dome&rx=12 のようなクエリを state に反映する */
+function applyQuery(search) {
+  const q = new URLSearchParams(search);
+  let touched = false;
+  if (q.has("shape") && SHAPES[q.get("shape")]) { state.shape = q.get("shape"); touched = true; }
+  for (const [key, f] of Object.entries(FIELDS)) {
+    if (!q.has(key)) continue;
+    const raw = q.get(key);
+    if (f.type === "int") state[key] = clampInt(raw, f.min, f.max);
+    else state[key] = raw === "1" || raw === "true";
+    touched = true;
+  }
+  for (const key of ["block", "stairBlock"]) {
+    if (q.has(key)) { state[key] = q.get(key); touched = true; }
+  }
+  // ?tab=sheet で全レイヤー一覧を開いた状態にできる（印刷用）
+  if (q.has("tab") && document.getElementById("tab-" + q.get("tab"))) activeTab = q.get("tab");
+  return touched;
+}
+
+function shareUrl() {
+  const q = new URLSearchParams();
+  q.set("shape", state.shape);
+  for (const key of SHAPES[state.shape].fields) {
+    const f = FIELDS[key];
+    q.set(key, f.type === "bool" ? (state[key] ? "1" : "0") : String(state[key]));
+  }
+  return location.origin + location.pathname + "?" + q.toString();
+}
+
+/* ------------------------------------------------------------------
+   13. イベント
+   ------------------------------------------------------------------ */
+
+function setTab(name) {
+  activeTab = name;
+  for (const b of document.querySelectorAll(".tabs button")) {
+    b.setAttribute("aria-selected", String(b.dataset.tab === name));
+  }
+  for (const p of document.querySelectorAll(".tabpanel")) {
+    p.classList.toggle("active", p.id === "tab-" + name);
+  }
+  renderOutputs();
+}
+
+function moveLayer(delta) {
+  if (!currentGrid) return;
+  layerIndex = Math.max(0, Math.min(currentGrid.sy - 1, layerIndex + delta));
+  renderOutputs();
+}
+
+function initEvents() {
+  for (const b of document.querySelectorAll(".tabs button")) {
+    b.addEventListener("click", () => setTab(b.dataset.tab));
+  }
+  $("#layer").addEventListener("input", (e) => { layerIndex = Number(e.target.value); renderOutputs(); });
+  $("#btn-prev").addEventListener("click", () => moveLayer(-1));
+  $("#btn-next").addEventListener("click", () => moveLayer(1));
+  $("#elev-mode").addEventListener("change", (e) => { elevMode = e.target.value; renderOutputs(); });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if (e.key === "ArrowLeft") { moveLayer(-1); e.preventDefault(); }
+    if (e.key === "ArrowRight") { moveLayer(1); e.preventDefault(); }
+  });
+
+  // 平面図のホバーで座標を出す
+  $("#plan").addEventListener("mousemove", (e) => {
+    const g = currentGrid;
+    if (!g) return;
+    const rect = e.target.getBoundingClientRect();
+    const cell = planCellSize(g), gutter = 24;
+    const x = Math.floor((e.clientX - rect.left - gutter) / cell);
+    const z = Math.floor((e.clientY - rect.top - gutter) / cell);
+    if (x < 0 || z < 0 || x >= g.sx || z >= g.sz) { $("#readout").textContent = ""; return; }
+    const kind = gGet(g, x, layerIndex, z);
+    const dir = gDir(g, x, layerIndex, z);
+    const label = { 0: "空", 1: "ブロック", 2: "ブロック（輪郭）", 3: "階段", 4: "隅棟", 5: "柱" }[kind];
+    $("#readout").textContent =
+      "x=" + (x + g.labelX0) + "  z=" + (z + g.labelZ0) + "  " + (layerIndex + 1) + " 段目  —  " +
+      label + (kind === K.STAIR && DIR_NAME[dir] ? "（facing=" + DIR_NAME[dir] + "）" : "");
+  });
+  $("#plan").addEventListener("mouseleave", () => { $("#readout").textContent = ""; });
+
+  $("#btn-copy-text").addEventListener("click", () => copyText(buildText(state, build(state)), "テキスト図面"));
+  $("#btn-copy-cmd").addEventListener("click", () => copyText(buildCommands(state, build(state)), "コマンド"));
+  $("#btn-dl-text").addEventListener("click", () => {
+    downloadBlob(new Blob([buildText(state, build(state))], { type: "text/plain" }), "blueprint.txt");
+  });
+  $("#btn-dl-cmd").addEventListener("click", () => {
+    downloadBlob(new Blob([buildCommands(state, build(state))], { type: "text/plain" }), "build.mcfunction");
+  });
+
+  $("#btn-share").addEventListener("click", () => copyText(shareUrl(), "図面の URL"));
+  $("#btn-print").addEventListener("click", () => window.print());
+  $("#btn-reset").addEventListener("click", () => {
+    state = defaultState();
+    layerIndex = 0;
+    renderAll();
+    toast("初期値に戻しました");
+  });
+
+  $("#btn-theme").addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme");
+    const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    const next = dark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem(STORAGE_KEY + "/theme", next); } catch (e) { /* 無視 */ }
+    renderOutputs();
+  });
+
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderOutputs, 120);
+  });
+}
+
+/* ------------------------------------------------------------------
+   14. セルフテスト（?selftest=1）
+
+   幾何の不変条件だけを見る。ここが 0 failed でないと CI がデプロイしない。
+   ------------------------------------------------------------------ */
+
+function runSelfTest() {
+  const results = [];
+  const ok = (name, cond, detail) => results.push({ name, pass: Boolean(cond), detail: detail || "" });
+  const st = (over) => Object.assign(defaultState(), over);
+
+  // --- 1. 円の対称性と幅 ---
+  const c5 = buildCylinder(st({ shape: "cylinder", rx: 5, rz: 5, height: 1, hollow: false }));
+  ok("半径 5 の円は 11 × 11", c5.sx === 11 && c5.sz === 11);
+  ok("半径 5 の円の中央行の幅が 2R+1", (() => {
+    let n = 0;
+    for (let x = 0; x < c5.sx; x++) if (gGet(c5, x, 0, 5)) n++;
+    return n === 11;
+  })());
+  ok("円が 4 回対称", (() => {
+    for (let z = 0; z < c5.sz; z++) {
+      for (let x = 0; x < c5.sx; x++) {
+        const a = gGet(c5, x, 0, z) ? 1 : 0;
+        if ((gGet(c5, c5.sx - 1 - x, 0, z) ? 1 : 0) !== a) return false;
+        if ((gGet(c5, x, 0, c5.sz - 1 - z) ? 1 : 0) !== a) return false;
+        if ((gGet(c5, z, 0, x) ? 1 : 0) !== a) return false;
+      }
+    }
+    return true;
+  })());
+  ok("各行が連続している（穴が開いていない）", (() => {
+    for (let z = 0; z < c5.sz; z++) {
+      let first = -1, last = -1, n = 0;
+      for (let x = 0; x < c5.sx; x++) if (gGet(c5, x, 0, z)) { if (first < 0) first = x; last = x; n++; }
+      if (n && last - first + 1 !== n) return false;
+    }
+    return true;
+  })());
+
+  const even6 = buildCylinder(st({ shape: "cylinder", rx: 6, rz: 6, height: 1, hollow: false, even: true }));
+  ok("偶数直径では幅が 2R", even6.sx === 12 && even6.sz === 12);
+  ok("偶数直径でも 4 回対称", (() => {
+    for (let z = 0; z < even6.sz; z++) {
+      for (let x = 0; x < even6.sx; x++) {
+        const a = gGet(even6, x, 0, z) ? 1 : 0;
+        if ((gGet(even6, even6.sx - 1 - x, 0, z) ? 1 : 0) !== a) return false;
+        if ((gGet(even6, x, 0, even6.sz - 1 - z) ? 1 : 0) !== a) return false;
+      }
+    }
+    return true;
+  })());
+
+  // --- 2. 輪郭 ---
+  ok("輪郭はブロックの一部（空セルは輪郭にならない）", (() => {
+    let edges = 0;
+    for (let z = 0; z < c5.sz; z++) for (let x = 0; x < c5.sx; x++) if (gGet(c5, x, 0, z) === K.EDGE) edges++;
+    return edges > 0 && edges <= countBlocks(c5);
+  })());
+  const ring = buildCylinder(st({ shape: "cylinder", rx: 6, rz: 6, height: 3, hollow: true, thickness: 1 }));
+  ok("空洞の円柱は中身が空", gGet(ring, 6, 1, 6) === K.EMPTY);
+  ok("空洞の円柱に床も天井もできない", countLayer(ring, 0) === countLayer(ring, 1));
+  ok("床を張ると 1 段目が増える", (() => {
+    const withFloor = buildCylinder(st({ shape: "cylinder", rx: 6, rz: 6, height: 3, hollow: true, capBottom: true }));
+    return countLayer(withFloor, 0) > countLayer(withFloor, 1);
+  })());
+
+  // --- 3. 球 ---
+  const sp = buildSphere(st({ rx: 10, ry: 10, rz: 10, hollow: false }), false);
+  ok("球は 21 × 21 × 21", sp.sx === 21 && sp.sy === 21 && sp.sz === 21);
+  ok("中実の球のブロック数が体積とおおむね一致", (() => {
+    const v = (4 / 3) * Math.PI * Math.pow(10.5, 3);
+    const n = countBlocks(sp);
+    return Math.abs(n - v) / v < 0.05;
+  })(), "実測 " + countBlocks(sp));
+  const shell = buildSphere(st({ rx: 10, ry: 10, rz: 10, hollow: true, thickness: 1 }), false);
+  ok("空洞の球は中心が空", gGet(shell, 10, 10, 10) === K.EMPTY);
+  ok("空洞の球に穴が開いていない", (() => {
+    // 殻の内側から外へ 6 方向に抜けられないことを、中心から泛水して確認する
+    const seen = new Set();
+    const stack = [[10, 10, 10]];
+    while (stack.length) {
+      const [x, y, z] = stack.pop();
+      const key = x + "," + y + "," + z;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (x < 0 || y < 0 || z < 0 || x >= shell.sx || y >= shell.sy || z >= shell.sz) return false; // 外へ漏れた
+      if (gGet(shell, x, y, z)) continue;
+      stack.push([x + 1, y, z], [x - 1, y, z], [x, y + 1, z], [x, y - 1, z], [x, y, z + 1], [x, y, z - 1]);
+    }
+    return true;
+  })());
+  ok("厚みを増やすとブロック数が増える", (() => {
+    const t2 = buildSphere(st({ rx: 10, ry: 10, rz: 10, hollow: true, thickness: 2 }), false);
+    return countBlocks(t2) > countBlocks(shell);
+  })());
+
+  // --- 4. ドーム ---
+  const dome = buildSphere(st({ rx: 8, ry: 8, rz: 8, hollow: true, thickness: 1 }), true);
+  ok("ドームは球の上半分の段数", dome.sy === 9);
+  ok("ドームの 1 段目は輪だけ（床が張られない）", (() => {
+    const center = gGet(dome, 8, 0, 8);
+    return center === K.EMPTY && countLayer(dome, 0) > 0;
+  })());
+  ok("ドームは上に行くほど狭くなる", countLayer(dome, 0) > countLayer(dome, dome.sy - 1));
+
+  // --- 5. 円錐 ---
+  const cone = buildCone(st({ rx: 8, rz: 8, height: 10, hollow: false }));
+  ok("円錐の最下段がいちばん広い", countLayer(cone, 0) === Math.max.apply(null,
+    Array.from({ length: cone.sy }, (_, y) => countLayer(cone, y))));
+  ok("円錐の頂点は 1 ブロック", countLayer(cone, cone.sy - 1) === 1);
+  ok("円錐の各層は同じ半径の円と一致する", (() => {
+    // 層ごとに半径を丸めているので、どの層も circle ジェネレータの結果と同じになるはず
+    for (let y = 0; y < cone.sy; y++) {
+      const r = Math.round(8 * (cone.sy - 1 - y) / (cone.sy - 1));
+      const disc = buildCylinder(st({ shape: "cylinder", rx: r, rz: r, height: 1, hollow: false }));
+      const off = 8 - r;
+      for (let z = 0; z < disc.sz; z++) {
+        for (let x = 0; x < disc.sx; x++) {
+          const a = gGet(disc, x, 0, z) ? 1 : 0;
+          if ((gGet(cone, x + off, y, z + off) ? 1 : 0) !== a) return false;
+        }
+      }
+      if (countLayer(cone, y) !== countBlocks(disc)) return false;
+    }
+    return true;
+  })());
+  ok("円錐に 1 マス幅のとげが出ない", (() => {
+    for (let y = 0; y < cone.sy; y++) {
+      let widest = 0, narrowest = Infinity;
+      for (let z = 0; z < cone.sz; z++) {
+        let n = 0;
+        for (let x = 0; x < cone.sx; x++) if (gGet(cone, x, y, z)) n++;
+        if (!n) continue;
+        widest = Math.max(widest, n);
+        narrowest = Math.min(narrowest, n);
+      }
+      if (widest >= 7 && narrowest < 3) return false;
+    }
+    return true;
+  })());
+
+  // --- 6. 屋根 ---
+  const gable = buildGable(st({ shape: "gable", width: 11, depth: 5, run: 1, stairs: true, gableEnds: false }));
+  ok("幅 11 の切妻屋根は 6 段", gable.sy === 6);
+  ok("切妻屋根は左右対称", (() => {
+    for (let y = 0; y < gable.sy; y++) {
+      for (let z = 0; z < gable.sz; z++) {
+        for (let x = 0; x < gable.sx; x++) {
+          const a = gGet(gable, x, y, z) ? 1 : 0;
+          if ((gGet(gable, gable.sx - 1 - x, y, z) ? 1 : 0) !== a) return false;
+        }
+      }
+    }
+    return true;
+  })());
+  ok("切妻屋根の階段の向きが左右で逆", (() => {
+    const west = gDir(gable, 0, 0, 0), east = gDir(gable, gable.sx - 1, 0, 0);
+    return west === DIR.EAST && east === DIR.WEST;
+  })());
+  ok("棟は 1 列（幅が奇数のとき）", countLayer(gable, gable.sy - 1) === gable.sz);
+  ok("妻壁を入れるとブロックが増える", (() => {
+    const withEnds = buildGable(st({ shape: "gable", width: 11, depth: 5, run: 1, gableEnds: true }));
+    return countBlocks(withEnds) > countBlocks(gable);
+  })());
+  const hip = buildHip(st({ shape: "hip", width: 11, depth: 11, run: 1, stairs: true }));
+  ok("寄棟屋根は四方から狭まる", countLayer(hip, 0) > countLayer(hip, hip.sy - 1));
+  ok("寄棟屋根の角は隅棟になる", gGet(hip, 0, 0, 0) === K.CORNER);
+  ok("寄棟屋根は四辺すべてに階段が向く", (() => {
+    const want = [DIR.SOUTH, DIR.NORTH, DIR.EAST, DIR.WEST];
+    const got = [gDir(hip, 5, 0, 0), gDir(hip, 5, 0, 10), gDir(hip, 0, 0, 5), gDir(hip, 10, 0, 5)];
+    return want.every((d, i) => d === got[i]);
+  })());
+  ok("寄棟屋根の大棟は階段にならない", (() => {
+    // 幅 11 × 奥行き 9 なら、最上段の中央 1 マスが棟になる
+    const h2 = buildHip(st({ shape: "hip", width: 11, depth: 9, run: 1, stairs: true }));
+    return gGet(h2, 5, h2.sy - 1, 4) === K.BLOCK && gGet(h2, 4, h2.sy - 1, 4) === K.CORNER;
+  })());
+  const shed = buildShed(st({ shape: "shed", width: 8, depth: 4, run: 2, stairs: true }));
+  ok("片流れ屋根は勾配 2 で 4 段", shed.sy === 4);
+  ok("片流れ屋根は全段が東向きの階段を持つ", (() => {
+    for (let y = 0; y < shed.sy; y++) {
+      let found = false;
+      for (let x = 0; x < shed.sx; x++) if (gGet(shed, x, y, 0) === K.STAIR && gDir(shed, x, y, 0) === DIR.EAST) found = true;
+      if (!found) return false;
+    }
+    return true;
+  })());
+
+  // --- 7. 螺旋階段 ---
+  const spSt = st({ shape: "spiral", radius: 2, height: 17, steps: 8, pillar: true });
+  const spiral = buildSpiral(spSt);
+  ok("螺旋階段は 1 段につき 1 ブロック上がる", (() => {
+    for (let y = 0; y < spiral.sy; y++) {
+      let n = 0;
+      for (let z = 0; z < spiral.sz; z++) for (let x = 0; x < spiral.sx; x++) if (gGet(spiral, x, y, z) === K.STAIR) n++;
+      if (n !== 1) return false;
+    }
+    return true;
+  })());
+  ok("隣り合う段が飛ばない（半径 2・8 段）", (() => {
+    const steps = spiralSteps(spSt);
+    for (let i = 1; i < steps.length; i++) {
+      const dx = steps[i].x - steps[i - 1].x, dz = steps[i].z - steps[i - 1].z;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) > 1 || (dx === 0 && dz === 0)) return false;
+    }
+    return true;
+  })());
+  ok("段が飛ぶ設定では警告が出る",
+    computeWarnings(st({ shape: "spiral", radius: 3, height: 13, steps: 12 }),
+      buildSpiral(st({ shape: "spiral", radius: 3, height: 13, steps: 12 }))).some((w) => /離れて/.test(w.msg)));
+  ok("推奨の段数では飛ばなくなる", (() => {
+    const base = st({ shape: "spiral", radius: 3, height: 13, steps: 12 });
+    const best = recommendSteps(base);
+    if (!best) return false;
+    const steps = spiralSteps(Object.assign({}, base, { steps: best }));
+    for (let i = 1; i < steps.length; i++) {
+      const dx = steps[i].x - steps[i - 1].x, dz = steps[i].z - steps[i - 1].z;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) > 1 || (dx === 0 && dz === 0)) return false;
+    }
+    return true;
+  })());
+  ok("柱は中心に立つ", gGet(spiral, 2, 0, 2) === K.PILLAR || gGet(spiral, 2, 1, 2) === K.PILLAR);
+
+  // --- 8. アーチ ---
+  const arch = buildArch(st({ shape: "arch", span: 11, rise: 5, archDepth: 1, archThickness: 1, legs: 3 }));
+  ok("アーチの幅は 開口 + 厚み × 2", arch.sx === 13);
+  ok("アーチの開口は空いている", gGet(arch, 6, 1, 0) === K.EMPTY && gGet(arch, 6, 0, 0) === K.EMPTY);
+  ok("アーチの脚は両側にある", gGet(arch, 0, 0, 0) !== K.EMPTY && gGet(arch, arch.sx - 1, 0, 0) !== K.EMPTY);
+  ok("アーチは左右対称", (() => {
+    for (let y = 0; y < arch.sy; y++) {
+      for (let x = 0; x < arch.sx; x++) {
+        const a = gGet(arch, x, y, 0) ? 1 : 0;
+        if ((gGet(arch, arch.sx - 1 - x, y, 0) ? 1 : 0) !== a) return false;
+      }
+    }
+    return true;
+  })());
+  ok("アーチの頂部が閉じている（開口の真上にブロックがある）",
+    gGet(arch, 6, arch.sy - 1, 0) !== K.EMPTY && arch.sy === 3 + 5 + 1 + 1);
+  ok("アーチの各段は左右 2 か所以上か 0（輪が途切れない）", (() => {
+    for (let y = 0; y < arch.sy - 1; y++) {
+      const n = countLayer(arch, y);
+      if (n === 1) return false;
+    }
+    return true;
+  })());
+  ok("厚みを増やすとアーチも厚くなる", (() => {
+    const t3 = buildArch(st({ shape: "arch", span: 11, rise: 5, archDepth: 1, archThickness: 3, legs: 3 }));
+    return t3.sx === 17 && countBlocks(t3) > countBlocks(arch);
+  })());
+
+  // --- 9. 出力 ---
+  const small = st({ shape: "cylinder", rx: 3, rz: 3, height: 2, hollow: true });
+  const smallG = buildCylinder(small);
+  const cmd = buildCommands(small, smallG);
+  ok("コマンドの行数（コメント以外）がブロック数と一致",
+    cmd.split("\n").filter((l) => l && !l.startsWith("#")).length === countBlocks(smallG));
+  ok("コマンドは相対座標", /^setblock ~-?\d+ ~\d+ ~-?\d+ /.test(cmd.split("\n").filter((l) => !l.startsWith("#"))[0]));
+  ok("階段には facing が付く", (() => {
+    const gs = buildGable(st({ shape: "gable", width: 9, depth: 3, run: 1, stairs: true }));
+    return /\[facing=(east|west)\]/.test(buildCommands(st({ shape: "gable", width: 9, depth: 3 }), gs));
+  })());
+  const txt = buildText(small, smallG);
+  ok("テキスト図面の行数が全レイヤー分ある",
+    txt.split("\n").filter((l) => /^[.#^v<>+|]+$/.test(l)).length === smallG.sy * smallG.sz);
+  ok("テキスト図面に凡例が入る", txt.includes("凡例"));
+
+  // --- 10. 壊れた入力 ---
+  ok("半径 0 でも例外を投げない", (() => {
+    try { return buildCylinder(st({ rx: 0, rz: 0, height: 1 })).sx === 1; } catch (e) { return false; }
+  })());
+  ok("負の値はクランプされる", (() => {
+    try { const g = buildCylinder(st({ rx: -5, rz: -5, height: -3 })); return g.sx >= 1 && g.sy >= 1; }
+    catch (e) { return false; }
+  })());
+  ok("すべての形状が例外なく生成できる", (() => {
+    for (const key of Object.keys(SHAPES)) {
+      try { const g = build(st({ shape: key })); if (!g || g.sy < 1) return false; }
+      catch (e) { return false; }
+    }
+    return true;
+  })());
+  ok("空の URL クエリでは state が変わらない", applyQuery("") === false);
+  ok("URL クエリが state に入る", (() => {
+    const saved = JSON.stringify(state);
+    applyQuery("?shape=dome&rx=12");
+    const good = state.shape === "dome" && state.rx === 12;
+    state = JSON.parse(saved);
+    return good;
+  })());
+
+  // --- 結果表示 ---
+  const passed = results.filter((r) => r.pass).length;
+  const failed = results.length - passed;
+  const body = results.map((r) => (r.pass ? "PASS  " : "FAIL  ") + r.name + (r.detail ? " — " + r.detail : "")).join("\n");
+  const pre = h("pre", { id: "selftest" });
+  pre.textContent = "SELFTEST: " + passed + " passed, " + failed + " failed\n\n" + body;
+  document.body.insertBefore(pre, document.body.firstChild);
+}
+
+/* ------------------------------------------------------------------
+   15. 起動
+   ------------------------------------------------------------------ */
+
+function init() {
+  try {
+    const theme = localStorage.getItem(STORAGE_KEY + "/theme");
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) { /* 無視 */ }
+
+  load();
+  applyQuery(location.search);
+  initEvents();
+  syncElevMode();
+  setTab(activeTab);
+  renderAll();
+
+  if (/[?&]selftest=1/.test(location.search)) runSelfTest();
+}
+
+init();
+</script>
+</body>
+</html>
