@@ -301,5 +301,6 @@ Web 版のセッションは以下のように隔離されています。
 ## 次に読む
 
 - 定型作業を仕組み化する → [08 拡張機能](08-extensions.md)
+- 許可ルールを書式ミスなく組み立てる → [設定ジェネレータ](https://hayuo8ll-del.github.io/ms2/)（[ソース](../app/README.md)）
 
 **公式ドキュメント**: https://code.claude.com/docs/en/permission-modes / https://code.claude.com/docs/en/permissions / https://code.claude.com/docs/en/security

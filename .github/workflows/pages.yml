@@ -1,0 +1,65 @@
+name: Deploy app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "app/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時に走らせない。実行中のデプロイは中断しない。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # アプリに埋め込んだセルフテスト（?selftest=1）を Chrome で実行する。
+  # 生成ロジックが壊れた状態でデプロイしないための関門。
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: セルフテストを実行
+        run: |
+          google-chrome --headless=new --disable-gpu --no-sandbox \
+            --virtual-time-budget=5000 \
+            --dump-dom "file://$PWD/app/index.html?selftest=1" > dom.html
+          sed -n 's/.*\(SELFTEST: [0-9]* passed, [0-9]* failed\).*/\1/p' dom.html | head -1
+          grep -q "SELFTEST: [0-9]* passed, 0 failed" dom.html
+
+      - name: 失敗したテストを表示
+        if: failure()
+        run: sed -n '/SELFTEST/,/<\/pre>/p' dom.html || true
+
+  deploy:
+    needs: selftest
+    # プレビュー用の PR ビルドではデプロイしない
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Jekyll による加工を止める
+        run: touch app/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

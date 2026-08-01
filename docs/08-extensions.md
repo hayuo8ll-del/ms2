@@ -474,5 +474,6 @@ claude plugin install code-review@claude-plugins-official
 ## 次に読む
 
 - 自動化・並列実行に広げる → [09 自動化とチーム利用](09-automation.md)
+- スキル・フック・サブエージェントの雛形を作る → [設定ジェネレータ](https://hayuo8ll-del.github.io/ms2/)（[ソース](../app/README.md)）
 
 **公式ドキュメント**: https://code.claude.com/docs/en/features-overview / https://code.claude.com/docs/en/skills / https://code.claude.com/docs/en/hooks-guide / https://code.claude.com/docs/en/mcp / https://code.claude.com/docs/en/sub-agents
