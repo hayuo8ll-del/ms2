@@ -357,5 +357,6 @@ API のテストにはローカルの Redis インスタンスが必要だと覚
 
 - 承認の煩わしさを減らす → [07 権限とセキュリティ](07-permissions-security.md)
 - 「時々しか使わない手順」を整理する → [08 拡張機能](08-extensions.md)
+- この章の内容を実際のファイルにする → [設定ジェネレータ](https://hayuo8ll-del.github.io/ms2/)（[ソース](../app/README.md)）
 
 **公式ドキュメント**: https://code.claude.com/docs/en/memory

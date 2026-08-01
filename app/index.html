@@ -1,0 +1,1919 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code 設定ジェネレータ</title>
+<meta name="description" content="質問に答えると CLAUDE.md / settings.json / hooks / サブエージェント / スキル / .mcp.json を生成します。">
+<style>
+/* ------------------------------------------------------------------
+   配色。ライトを基準に、prefers-color-scheme と data-theme の両方で
+   ダークへ切り替えられるようにしている（トグルが OS 設定に勝つ）。
+   ------------------------------------------------------------------ */
+:root {
+  --bg: #faf9f7;
+  --panel: #ffffff;
+  --panel-2: #f4f2ef;
+  --text: #1f1d1b;
+  --muted: #6b665f;
+  --line: #e2ded8;
+  --accent: #c1552f;
+  --accent-soft: #fdf0ea;
+  --warn: #9a6a00;
+  --warn-soft: #fdf6e3;
+  --danger: #b3261e;
+  --danger-soft: #fdecea;
+  --ok: #2e6b45;
+  --code-bg: #f4f2ef;
+  --radius: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17161a;
+    --panel: #1f1e23;
+    --panel-2: #26252b;
+    --text: #eceaee;
+    --muted: #a09ba6;
+    --line: #35333b;
+    --accent: #e0855f;
+    --accent-soft: #2e211c;
+    --warn: #e0b44a;
+    --warn-soft: #2c2618;
+    --danger: #f08a80;
+    --danger-soft: #2f1c1a;
+    --ok: #7dc79b;
+    --code-bg: #16151a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17161a; --panel: #1f1e23; --panel-2: #26252b; --text: #eceaee;
+  --muted: #a09ba6; --line: #35333b; --accent: #e0855f; --accent-soft: #2e211c;
+  --warn: #e0b44a; --warn-soft: #2c2618; --danger: #f08a80; --danger-soft: #2f1c1a;
+  --ok: #7dc79b; --code-bg: #16151a;
+}
+:root[data-theme="light"] {
+  --bg: #faf9f7; --panel: #ffffff; --panel-2: #f4f2ef; --text: #1f1d1b;
+  --muted: #6b665f; --line: #e2ded8; --accent: #c1552f; --accent-soft: #fdf0ea;
+  --warn: #9a6a00; --warn-soft: #fdf6e3; --danger: #b3261e; --danger-soft: #fdecea;
+  --ok: #2e6b45; --code-bg: #f4f2ef;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+}
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace; }
+
+/* ---------- ヘッダー ---------- */
+header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+header h1 .dot { color: var(--accent); }
+header .sub { color: var(--muted); font-size: 12px; margin: 0; }
+header .spacer { flex: 1; }
+header .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ---------- 共通パーツ ---------- */
+button, select, input, textarea {
+  font: inherit; color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+textarea { width: 100%; resize: vertical; min-height: 72px; line-height: 1.6; }
+input[type="text"] { width: 100%; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.08); }
+button.ghost { background: transparent; }
+button.mini { padding: 2px 8px; font-size: 12px; }
+button.danger { color: var(--danger); }
+label { display: block; font-size: 13px; margin-bottom: 4px; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > * { flex: 1 1 200px; min-width: 0; }
+.field { margin-bottom: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  border: 1px dashed var(--line); background: var(--panel-2);
+  border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.sw { display: flex; align-items: center; gap: 8px; }
+.sw input { width: auto; }
+
+/* ---------- レイアウト ---------- */
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0;
+  height: calc(100vh - 62px);
+}
+.pane { min-width: 0; overflow-y: auto; }
+.pane.form { border-right: 1px solid var(--line); }
+.pane.out { background: var(--panel-2); display: flex; flex-direction: column; }
+
+/* ---------- タブ ---------- */
+.tabs {
+  display: flex; gap: 2px; padding: 10px 16px 0; flex-wrap: wrap;
+  position: sticky; top: 0; background: var(--bg); z-index: 5;
+  border-bottom: 1px solid var(--line);
+}
+.tabs button {
+  border: 1px solid transparent; border-bottom: none; background: transparent;
+  border-radius: var(--radius) var(--radius) 0 0; color: var(--muted);
+  padding: 6px 12px; font-size: 13px;
+}
+.tabs button[aria-selected="true"] {
+  background: var(--panel); border-color: var(--line); color: var(--text);
+  margin-bottom: -1px; font-weight: 600;
+}
+.panel { padding: 18px 20px 60px; display: none; }
+.panel.active { display: block; }
+.panel > h2 { font-size: 15px; margin: 0 0 4px; }
+.panel > .lead { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
+.panel > .lead a { color: var(--accent); }
+
+fieldset {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin: 0 0 18px; background: var(--panel);
+}
+legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
+
+/* ---------- 繰り返し項目のカード ---------- */
+.card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); padding: 12px 14px; margin-bottom: 12px;
+}
+.card > .card-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.card > .card-head .title { font-weight: 600; font-size: 13px; flex: 1; }
+.empty { color: var(--muted); font-size: 12.5px; padding: 10px 0; }
+
+/* 権限ルールの一覧 */
+.rules { display: flex; flex-direction: column; gap: 6px; }
+.rule {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 4px 6px 4px 10px;
+}
+.rule .mono { flex: 1; font-size: 12.5px; word-break: break-all; }
+
+/* ---------- 出力ペイン ---------- */
+.out-head {
+  padding: 12px 16px 0; position: sticky; top: 0; background: var(--panel-2); z-index: 5;
+}
+.warnings { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.warning {
+  border-radius: var(--radius); padding: 7px 12px; font-size: 12.5px;
+  border: 1px solid transparent;
+}
+.warning.info { background: var(--accent-soft); border-color: var(--accent); }
+.warning.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.warning.error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.warning b { font-weight: 700; }
+
+.filetabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.filetabs button {
+  font-size: 12px; padding: 3px 9px; background: var(--panel);
+  border-radius: 999px; color: var(--muted);
+}
+.filetabs button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.filebar {
+  display: flex; align-items: center; gap: 8px; padding: 0 16px 8px;
+  background: var(--panel-2);
+}
+.filebar .path { flex: 1; font-size: 12.5px; color: var(--muted); word-break: break-all; }
+pre.code {
+  flex: 1; margin: 0; padding: 16px 18px 60px;
+  background: var(--code-bg); border-top: 1px solid var(--line);
+  overflow: auto; font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+}
+.toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 8px 16px;
+  border-radius: 999px; font-size: 13px; opacity: 0; pointer-events: none;
+  transition: opacity .18s; z-index: 50;
+}
+.toast.show { opacity: 1; }
+
+#selftest { padding: 16px; background: var(--code-bg); font-size: 12px; white-space: pre-wrap; }
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; height: auto; }
+  .pane { overflow: visible; }
+  .pane.form { border-right: none; border-bottom: 1px solid var(--line); }
+  .tabs, .out-head { position: static; }
+  pre.code { max-height: 60vh; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Claude Code 設定ジェネレータ<span class="dot">.</span></h1>
+    <p class="sub">答えるだけで <code>CLAUDE.md</code> / <code>settings.json</code> / フック / サブエージェント / スキル / <code>.mcp.json</code> を生成します</p>
+  </div>
+  <div class="spacer"></div>
+  <div class="actions">
+    <select id="preset" title="プリセットを読み込む">
+      <option value="">プリセットを選ぶ…</option>
+      <option value="node">Node / TypeScript</option>
+      <option value="python">Python</option>
+      <option value="go">Go</option>
+      <option value="monorepo">モノレポ</option>
+    </select>
+    <button class="ghost" id="btn-export">設定を保存</button>
+    <button class="ghost" id="btn-import">設定を読込</button>
+    <button class="ghost" id="btn-reset">全消去</button>
+    <button class="ghost" id="btn-theme" title="テーマ切り替え">◐</button>
+    <input type="file" id="file-import" accept="application/json,.json" hidden>
+  </div>
+</header>
+
+<main>
+  <!-- ================= 入力ペイン ================= -->
+  <section class="pane form">
+    <nav class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-tab="claudemd" aria-selected="true">CLAUDE.md</button>
+      <button role="tab" data-tab="perms" aria-selected="false">権限</button>
+      <button role="tab" data-tab="hooks" aria-selected="false">フック</button>
+      <button role="tab" data-tab="agents" aria-selected="false">サブエージェント</button>
+      <button role="tab" data-tab="skills" aria-selected="false">スキル</button>
+      <button role="tab" data-tab="mcp" aria-selected="false">MCP / rules</button>
+    </nav>
+
+    <!-- ---------- タブ1: CLAUDE.md ---------- -->
+    <div class="panel active" id="panel-claudemd" role="tabpanel">
+      <h2>CLAUDE.md</h2>
+      <p class="lead">毎セッション全文が読み込まれる常時コンテキスト。<b>「これを消したら Claude はミスをするか？」</b>に YES のものだけ書きます。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/06-claude-md.md" target="_blank" rel="noopener">→ ガイド 06</a></p>
+
+      <fieldset>
+        <legend>プロジェクト</legend>
+        <div class="row">
+          <div class="field">
+            <label for="f-project">プロジェクト名</label>
+            <input type="text" id="f-project" data-bind="meta.project" placeholder="my-app">
+          </div>
+          <div class="field">
+            <label for="f-lang">言語・ランタイム</label>
+            <input type="text" id="f-lang" data-bind="meta.lang" placeholder="TypeScript / Node 22">
+          </div>
+          <div class="field">
+            <label for="f-pm">パッケージマネージャ</label>
+            <select id="f-pm" data-bind="meta.pm">
+              <option value="">（指定しない）</option>
+              <option value="npm">npm</option>
+              <option value="pnpm">pnpm</option>
+              <option value="yarn">yarn</option>
+              <option value="bun">bun</option>
+              <option value="uv">uv</option>
+              <option value="poetry">poetry</option>
+              <option value="pip">pip</option>
+              <option value="go">go</option>
+              <option value="cargo">cargo</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-summary">一行説明（任意）</label>
+          <input type="text" id="f-summary" data-bind="meta.summary" placeholder="社内向けの請求書管理 Web アプリ">
+          <p class="hint">コードを読めば分かることは書かない。ここは 1 行で十分です。</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>開発コマンド（Claude が推測できない最重要情報）</legend>
+        <div class="row">
+          <div class="field"><label for="f-cmd-dev">開発サーバー</label><input type="text" id="f-cmd-dev" data-bind="cmds.dev" placeholder="npm run dev"></div>
+          <div class="field"><label for="f-cmd-build">ビルド</label><input type="text" id="f-cmd-build" data-bind="cmds.build" placeholder="npm run build"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="f-cmd-test">テスト</label><input type="text" id="f-cmd-test" data-bind="cmds.test" placeholder="npm test"></div>
+          <div class="field"><label for="f-cmd-test1">単体テスト（1 ファイル）</label><input type="text" id="f-cmd-test1" data-bind="cmds.testOne" placeholder="npm test -- path/to/file"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="f-cmd-lint">Lint</label><input type="text" id="f-cmd-lint" data-bind="cmds.lint" placeholder="npm run lint"></div>
+          <div class="field"><label for="f-cmd-type">型チェック</label><input type="text" id="f-cmd-type" data-bind="cmds.typecheck" placeholder="npm run typecheck"></div>
+        </div>
+        <p class="hint">ここに入れたコマンドは、「権限」タブで許可ルールの候補として使えます。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>コードスタイル（デフォルトと違う点だけ）</legend>
+        <div class="row">
+          <div class="field">
+            <label for="f-indent">インデント</label>
+            <select id="f-indent" data-bind="style.indent">
+              <option value="">（指定しない）</option>
+              <option value="space2">半角スペース 2 つ</option>
+              <option value="space4">半角スペース 4 つ</option>
+              <option value="tab">タブ</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="f-modules">モジュール形式</label>
+            <select id="f-modules" data-bind="style.modules">
+              <option value="">（指定しない）</option>
+              <option value="esm">ES モジュール（CommonJS は使わない）</option>
+              <option value="cjs">CommonJS</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-style-extra">その他のスタイル規約（1 行に 1 つ）</label>
+          <textarea id="f-style-extra" data-bind="style.extra" placeholder="import は分割代入する（例: import { foo } from 'bar'）&#10;React コンポーネントは 1 ファイル 1 つ&#10;API ハンドラは src/api/handlers/ に置く"></textarea>
+          <p class="hint">❌「コードを適切にフォーマットする」→ ⭕「インデントは半角スペース 2 つ」。検証できる粒度まで具体的に。</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>作業ルール</legend>
+        <div class="row">
+          <div class="field"><label for="f-branch">ブランチ命名</label><input type="text" id="f-branch" data-bind="workflow.branch" placeholder="feature/<issue番号>-<短い説明>"></div>
+          <div class="field"><label for="f-commit">コミット規約</label><input type="text" id="f-commit" data-bind="workflow.commit" placeholder="Conventional Commits（feat: / fix: / chore:）"></div>
+        </div>
+        <div class="field">
+          <label for="f-workflow-extra">その他の作業ルール（1 行に 1 つ）</label>
+          <textarea id="f-workflow-extra" data-bind="workflow.extra" placeholder="!コミット前に必ず npm run typecheck を実行する&#10;テストスイート全体ではなく単体テストを優先して実行する&#10;main ブランチに直接プッシュしない"></textarea>
+          <p class="hint">行頭に <code>!</code> を付けると <code>**IMPORTANT:**</code> が付き、遵守率が上がります。</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>落とし穴・環境の癖</legend>
+        <div class="field">
+          <label for="f-pitfalls">非自明なハマりどころ（1 行に 1 つ）</label>
+          <textarea id="f-pitfalls" data-bind="pitfalls" placeholder="テストの前に docker compose up -d で Postgres を起動する必要がある&#10;src/legacy/ は自動生成なので手で編集しない&#10;環境変数 API_BASE_URL が無いと開発サーバーが落ちる"></textarea>
+        </div>
+        <div class="field">
+          <label for="f-imports">@ インポート（1 行に 1 パス）</label>
+          <textarea id="f-imports" data-bind="importsRaw" placeholder="README.md&#10;docs/git-instructions.md"></textarea>
+          <p class="hint">インポート先も起動時に読み込まれます。分割は整理のためで、コンテキスト削減にはなりません。</p>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- ---------- タブ2: 権限 ---------- -->
+    <div class="panel" id="panel-perms" role="tabpanel">
+      <h2>権限（.claude/settings.json）</h2>
+      <p class="lead">モードが土台、その上に allow / ask / deny を重ねます。deny と ask は<b>全モードで有効</b>です。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/07-permissions-security.md" target="_blank" rel="noopener">→ ガイド 07</a></p>
+
+      <fieldset>
+        <legend>権限モード</legend>
+        <div class="field">
+          <label for="f-mode">defaultMode</label>
+          <select id="f-mode" data-bind="perms.defaultMode">
+            <option value="">（設定しない）</option>
+            <option value="default">default — 毎回確認（UI 表示は Manual）</option>
+            <option value="acceptEdits">acceptEdits — 編集を自動承認</option>
+            <option value="plan">plan — 調べるが変更しない</option>
+            <option value="auto">auto — 分類モデルが危険な操作だけ止める</option>
+            <option value="dontAsk">dontAsk — 事前承認したものだけ（CI 向け）</option>
+            <option value="bypassPermissions">bypassPermissions — すべてスキップ</option>
+          </select>
+          <p class="hint" id="mode-desc"></p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>allow（確認なしで通す）</legend>
+        <div class="row">
+          <div class="field" style="flex: 3 1 260px;"><input type="text" id="in-allow" placeholder="Bash(npm test)"></div>
+          <div class="field" style="flex: 0 0 auto;"><button class="primary" id="add-allow">追加</button></div>
+        </div>
+        <div class="chips" id="chips-allow"></div>
+        <div class="rules" id="list-allow"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>ask（常に確認する）</legend>
+        <div class="row">
+          <div class="field" style="flex: 3 1 260px;"><input type="text" id="in-ask" placeholder="Bash(git push *)"></div>
+          <div class="field" style="flex: 0 0 auto;"><button class="primary" id="add-ask">追加</button></div>
+        </div>
+        <div class="chips" id="chips-ask"></div>
+        <div class="rules" id="list-ask"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>deny（常に拒否する）</legend>
+        <div class="row">
+          <div class="field" style="flex: 3 1 260px;"><input type="text" id="in-deny" placeholder="Read(.env)"></div>
+          <div class="field" style="flex: 0 0 auto;"><button class="primary" id="add-deny">追加</button></div>
+        </div>
+        <div class="chips" id="chips-deny"></div>
+        <div class="rules" id="list-deny"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>その他</legend>
+        <div class="field sw">
+          <input type="checkbox" id="f-automemory" data-bind="perms.autoMemoryDisabled">
+          <label for="f-automemory" style="margin:0">オートメモリを無効にする（<code>autoMemoryEnabled: false</code>）</label>
+        </div>
+        <div class="field">
+          <label for="f-env">環境変数（<code>KEY=VALUE</code> を 1 行に 1 つ）</label>
+          <textarea id="f-env" data-bind="envRaw" placeholder="NODE_ENV=development"></textarea>
+          <p class="hint">認証情報はここに書かないでください。<code>settings.json</code> は git にコミットされます。</p>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- ---------- タブ3: フック ---------- -->
+    <div class="panel" id="panel-hooks" role="tabpanel">
+      <h2>フック</h2>
+      <p class="lead">CLAUDE.md の指示が「お願い」なのに対し、フックは<b>必ず発火します</b>。ガードレールはここに置きます。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/08-extensions.md#hooks" target="_blank" rel="noopener">→ ガイド 08</a></p>
+      <div class="field">
+        <p class="hint" style="margin-bottom:8px">よく使う構成をそのまま追加できます:</p>
+        <div class="chips" id="chips-hooks"></div>
+      </div>
+      <div id="list-hooks"></div>
+      <button class="primary" id="add-hook">＋ フックを追加</button>
+    </div>
+
+    <!-- ---------- タブ4: サブエージェント ---------- -->
+    <div class="panel" id="panel-agents" role="tabpanel">
+      <h2>サブエージェント</h2>
+      <p class="lead">独自のコンテキスト・ツール権限を持つ隔離ワーカー。調査や大量のファイル読み込みを任せると、メインの会話には要約だけが返ります。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/08-extensions.md#subagents" target="_blank" rel="noopener">→ ガイド 08-5</a></p>
+      <div class="field"><div class="chips" id="chips-agents"></div></div>
+      <div id="list-agents"></div>
+      <button class="primary" id="add-agent">＋ サブエージェントを追加</button>
+    </div>
+
+    <!-- ---------- タブ5: スキル ---------- -->
+    <div class="panel" id="panel-skills" role="tabpanel">
+      <h2>スキル</h2>
+      <p class="lead">本文は使うときにだけ読み込まれるので、長い手順書を置いてもコンテキストをほとんど消費しません。<code>/名前</code> で呼び出せます。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/08-extensions.md#skills" target="_blank" rel="noopener">→ ガイド 08-2</a></p>
+      <div class="field"><div class="chips" id="chips-skills"></div></div>
+      <div id="list-skills"></div>
+      <button class="primary" id="add-skill">＋ スキルを追加</button>
+    </div>
+
+    <!-- ---------- タブ6: MCP / rules ---------- -->
+    <div class="panel" id="panel-mcp" role="tabpanel">
+      <h2>MCP サーバー</h2>
+      <p class="lead">「別のツールからチャットにデータをコピーしている」と気づいたら、それが MCP を繋ぐサインです。<code>.mcp.json</code> はチーム共有（project スコープ）になります。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/08-extensions.md#mcp" target="_blank" rel="noopener">→ ガイド 08-4</a></p>
+      <div class="field"><div class="chips" id="chips-mcp"></div></div>
+      <div id="list-mcp"></div>
+      <button class="primary" id="add-mcp">＋ MCP サーバーを追加</button>
+
+      <h2 style="margin-top:32px">パススコープルール（.claude/rules/）</h2>
+      <p class="lead">特定のファイルを扱うときだけ読み込まれるルール。CLAUDE.md が 200 行を超えたら、ここへ移すとコンテキストを節約できます。
+        <a href="https://github.com/hayuo8ll-del/ms2/blob/main/docs/06-claude-md.md#rules-dir" target="_blank" rel="noopener">→ ガイド 06-6</a></p>
+      <div id="list-rules"></div>
+      <button class="primary" id="add-rule">＋ ルールを追加</button>
+    </div>
+  </section>
+
+  <!-- ================= 出力ペイン ================= -->
+  <section class="pane out">
+    <div class="out-head">
+      <div class="warnings" id="warnings"></div>
+      <div class="filetabs" id="filetabs"></div>
+    </div>
+    <div class="filebar">
+      <span class="path mono" id="filepath"></span>
+      <button class="mini ghost" id="btn-copy">コピー</button>
+      <button class="mini ghost" id="btn-download">保存</button>
+      <button class="mini primary" id="btn-zip">一括 ZIP</button>
+    </div>
+    <pre class="code" id="output"></pre>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ==================================================================
+   Claude Code 設定ジェネレータ
+   依存ゼロ。state（下記）を唯一の真実とし、state → 文字列 の純粋関数で
+   すべての成果物を組み立てる。UI は state を書き換えて render() を呼ぶだけ。
+   ================================================================== */
+
+/* ------------------------------------------------------------------
+   1. 状態
+   ------------------------------------------------------------------ */
+
+const STORAGE_KEY = "cc-config-generator/v1";
+
+function emptyState() {
+  return {
+    meta: { project: "", lang: "", pm: "", summary: "" },
+    cmds: { dev: "", build: "", test: "", testOne: "", lint: "", typecheck: "" },
+    style: { indent: "", modules: "", extra: "" },
+    workflow: { branch: "", commit: "", extra: "" },
+    pitfalls: "",
+    importsRaw: "",
+    perms: { defaultMode: "", allow: [], ask: [], deny: [], autoMemoryDisabled: false },
+    envRaw: "",
+    hooks: [],
+    agents: [],
+    skills: [],
+    mcp: [],
+    rules: [],
+  };
+}
+
+let state = emptyState();
+let activeFile = 0;
+
+/* state のパス指定で読み書きする（data-bind="cmds.test" 用） */
+function getPath(obj, path) {
+  return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+function setPath(obj, path, value) {
+  const keys = path.split(".");
+  const last = keys.pop();
+  const target = keys.reduce((o, k) => (o[k] = o[k] || {}), obj);
+  target[last] = value;
+}
+
+/* ------------------------------------------------------------------
+   2. 小さなユーティリティ
+   ------------------------------------------------------------------ */
+
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+/** 改行区切りのテキストを、空行を落とした配列にする */
+function lines(text) {
+  return String(text || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** KEY=VALUE の行を { KEY: VALUE } にする */
+function parseEnv(text) {
+  const out = {};
+  for (const line of lines(text)) {
+    const i = line.indexOf("=");
+    if (i > 0) out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+
+/**
+ * YAML のスカラー値を、必要なときだけ引用符で囲む。
+ * 日本語をそのまま平文で書けるよう、YAML が誤読する形のときだけ引用する。
+ */
+function yamlValue(v) {
+  const s = String(v);
+  const needsQuote =
+    s === "" ||
+    s !== s.trim() ||
+    /[\n\r]/.test(s) ||
+    /^[-?:,[\]{}#&*!|>'"%@`]/.test(s) ||
+    /:\s/.test(s) ||
+    /\s#/.test(s);
+  if (!needsQuote) return s;
+  return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+/** ディレクトリ名・コマンド名に使える形かどうか */
+function isKebab(s) {
+  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(s);
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1600);
+}
+
+/* ------------------------------------------------------------------
+   3. 生成ロジック（すべて state → 文字列の純粋関数）
+   ------------------------------------------------------------------ */
+
+const INDENT_LABEL = {
+  space2: "インデントは半角スペース 2 つ",
+  space4: "インデントは半角スペース 4 つ",
+  tab: "インデントはタブ",
+};
+const MODULE_LABEL = {
+  esm: "ES モジュール（import/export）を使う。CommonJS（require）は使わない",
+  cjs: "CommonJS（require/module.exports）を使う",
+};
+
+/** 行頭の "!" を IMPORTANT に変換する */
+function ruleLine(s) {
+  return s.startsWith("!") ? "**IMPORTANT:** " + s.slice(1).trim() : s;
+}
+
+function buildClaudeMd(st) {
+  const out = [];
+  const title = st.meta.project || "プロジェクト";
+  out.push("# " + title, "");
+  if (st.meta.summary) out.push(st.meta.summary, "");
+
+  const facts = [];
+  if (st.meta.lang) facts.push("- 言語・ランタイム: " + st.meta.lang);
+  if (st.meta.pm) facts.push("- パッケージマネージャは `" + st.meta.pm + "` を使う（他のものは使わない）");
+  if (facts.length) out.push("## 環境", "", ...facts, "");
+
+  const cmdRows = [
+    ["開発サーバー", st.cmds.dev],
+    ["ビルド", st.cmds.build],
+    ["テスト（全体）", st.cmds.test],
+    ["テスト（単体）", st.cmds.testOne],
+    ["Lint", st.cmds.lint],
+    ["型チェック", st.cmds.typecheck],
+  ].filter(([, v]) => v);
+  if (cmdRows.length) {
+    out.push("## コマンド", "", "| 用途 | コマンド |", "| --- | --- |");
+    for (const [k, v] of cmdRows) out.push("| " + k + " | `" + v + "` |");
+    out.push("");
+  }
+
+  const styleLines = [];
+  if (INDENT_LABEL[st.style.indent]) styleLines.push("- " + INDENT_LABEL[st.style.indent]);
+  if (MODULE_LABEL[st.style.modules]) styleLines.push("- " + MODULE_LABEL[st.style.modules]);
+  for (const l of lines(st.style.extra)) styleLines.push("- " + ruleLine(l));
+  if (styleLines.length) out.push("## コードスタイル", "", ...styleLines, "");
+
+  const wfLines = [];
+  if (st.workflow.branch) wfLines.push("- ブランチ名は `" + st.workflow.branch + "` の形式にする");
+  if (st.workflow.commit) wfLines.push("- コミットメッセージは " + st.workflow.commit + "に従う");
+  for (const l of lines(st.workflow.extra)) wfLines.push("- " + ruleLine(l));
+  if (wfLines.length) out.push("## 作業ルール", "", ...wfLines, "");
+
+  const pit = lines(st.pitfalls);
+  if (pit.length) out.push("## 落とし穴", "", ...pit.map((l) => "- " + ruleLine(l)), "");
+
+  const imp = lines(st.importsRaw);
+  if (imp.length) {
+    out.push("## 参照", "", ...imp.map((p) => "@" + p.replace(/^@/, "")), "");
+  }
+
+  // 末尾の空行を 1 本に整える
+  while (out.length && out[out.length - 1] === "") out.pop();
+  return out.join("\n") + "\n";
+}
+
+/**
+ * settings.json を組み立てる。
+ * 権限タブとフックタブの内容を 1 つのオブジェクトに統合する
+ * （hooks はイベント名を兄弟キーとして並べる形を守る）。
+ */
+function buildSettings(st) {
+  const settings = {};
+
+  const permissions = {};
+  if (st.perms.defaultMode) permissions.defaultMode = st.perms.defaultMode;
+  for (const key of ["allow", "ask", "deny"]) {
+    if (st.perms[key] && st.perms[key].length) permissions[key] = st.perms[key].slice();
+  }
+  if (Object.keys(permissions).length) settings.permissions = permissions;
+
+  if (st.perms.autoMemoryDisabled) settings.autoMemoryEnabled = false;
+
+  const env = parseEnv(st.envRaw);
+  if (Object.keys(env).length) settings.env = env;
+
+  const hooks = {};
+  for (const h of st.hooks) {
+    if (!h.event || !h.command) continue;
+    (hooks[h.event] = hooks[h.event] || []).push({
+      matcher: h.matcher || "",
+      hooks: [{ type: "command", command: h.command }],
+    });
+  }
+  if (Object.keys(hooks).length) settings.hooks = hooks;
+
+  return settings;
+}
+
+function buildSettingsJson(st) {
+  return JSON.stringify(buildSettings(st), null, 2) + "\n";
+}
+
+/** サブエージェント 1 件 → Markdown */
+function buildAgentMd(a) {
+  const fm = ["---"];
+  fm.push("name: " + yamlValue(a.name || "unnamed"));
+  fm.push("description: " + yamlValue(a.description || ""));
+  if (a.tools && a.tools.length) fm.push("tools: " + a.tools.join(", "));
+  if (a.model) fm.push("model: " + a.model);
+  if (a.skills) fm.push("skills: " + a.skills);
+  if (a.isolation) fm.push("isolation: " + a.isolation);
+  fm.push("---", "", "");
+  return fm.join("\n") + (a.body || "").trim() + "\n";
+}
+
+/** スキル 1 件 → SKILL.md */
+function buildSkillMd(s) {
+  const fm = ["---"];
+  fm.push("name: " + yamlValue(s.name || "unnamed"));
+  fm.push("description: " + yamlValue(s.description || ""));
+  if (s.disableModelInvocation) fm.push("disable-model-invocation: true");
+  if (s.allowedTools) fm.push("allowed-tools: " + s.allowedTools);
+  if (s.context) fm.push("context: " + s.context);
+  fm.push("---", "", "");
+  return fm.join("\n") + (s.body || "").trim() + "\n";
+}
+
+/** パススコープルール 1 件 → Markdown */
+function buildRuleMd(r) {
+  const out = [];
+  const paths = lines(r.pathsRaw);
+  if (paths.length) {
+    out.push("---", "paths:");
+    for (const p of paths) out.push('  - "' + p + '"');
+    out.push("---", "");
+  }
+  out.push((r.body || "").trim());
+  return out.join("\n") + "\n";
+}
+
+/** .mcp.json を組み立てる */
+function buildMcpJson(st) {
+  const servers = {};
+  for (const m of st.mcp) {
+    if (!m.name) continue;
+    const entry = { type: m.transport || "http" };
+    if (entry.type === "stdio") {
+      delete entry.type; // stdio はコマンド指定だけで判別できる
+      entry.command = m.command || "";
+      const args = lines(m.argsRaw);
+      if (args.length) entry.args = args;
+    } else {
+      entry.url = m.url || "";
+    }
+    const env = parseEnv(m.envRaw);
+    if (Object.keys(env).length) entry.env = env;
+    servers[m.name] = entry;
+  }
+  return JSON.stringify({ mcpServers: servers }, null, 2) + "\n";
+}
+
+/** .mcp.json と等価な claude mcp add コマンド列 */
+function buildMcpCommands(st) {
+  const out = [];
+  for (const m of st.mcp) {
+    if (!m.name) continue;
+    const scope = m.scope && m.scope !== "local" ? " --scope " + m.scope : "";
+    const transport = m.transport || "http";
+    if (transport === "stdio") {
+      const envs = Object.entries(parseEnv(m.envRaw))
+        .map(([k, v]) => ' --env ' + k + '="' + v + '"')
+        .join("");
+      out.push(
+        "claude mcp add --transport stdio " + m.name + scope + envs +
+          " -- " + [m.command || "", ...lines(m.argsRaw)].join(" ").trim()
+      );
+    } else {
+      out.push("claude mcp add --transport " + transport + " " + m.name + scope + " " + (m.url || ""));
+    }
+  }
+  return out.length ? out.join("\n") + "\n" : "";
+}
+
+/** CLAUDE.md に書くことが 1 つでもあるか */
+function hasClaudeMdContent(st) {
+  return Boolean(
+    st.meta.project || st.meta.lang || st.meta.pm || st.meta.summary ||
+    Object.values(st.cmds).some(Boolean) ||
+    st.style.indent || st.style.modules || lines(st.style.extra).length ||
+    st.workflow.branch || st.workflow.commit || lines(st.workflow.extra).length ||
+    lines(st.pitfalls).length || lines(st.importsRaw).length
+  );
+}
+
+/**
+ * 生成物の一覧を作る。
+ * 返り値: [{ path, content }]（中身が空のものは含めない）
+ */
+function buildFiles(st) {
+  const files = [];
+
+  if (hasClaudeMdContent(st)) files.push({ path: "CLAUDE.md", content: buildClaudeMd(st) });
+
+  const settings = buildSettings(st);
+  if (Object.keys(settings).length) {
+    files.push({ path: ".claude/settings.json", content: JSON.stringify(settings, null, 2) + "\n" });
+  }
+
+  for (const a of st.agents) {
+    if (!a.name) continue;
+    files.push({ path: ".claude/agents/" + a.name + ".md", content: buildAgentMd(a) });
+  }
+  for (const s of st.skills) {
+    if (!s.name) continue;
+    files.push({ path: ".claude/skills/" + s.name + "/SKILL.md", content: buildSkillMd(s) });
+  }
+  for (const r of st.rules) {
+    if (!r.name) continue;
+    files.push({ path: ".claude/rules/" + r.name + ".md", content: buildRuleMd(r) });
+  }
+  if (st.mcp.some((m) => m.name)) {
+    files.push({ path: ".mcp.json", content: buildMcpJson(st) });
+    const cmds = buildMcpCommands(st);
+    if (cmds) {
+      files.push({
+        path: "mcp-add.sh",
+        content: "#!/usr/bin/env bash\n# .mcp.json を作らず CLI で追加する場合はこちら\nset -euo pipefail\n\n" + cmds,
+      });
+    }
+  }
+  return files;
+}
+
+/* ------------------------------------------------------------------
+   4. 警告（ガイドの判断基準をそのままチェックにする）
+   ------------------------------------------------------------------ */
+
+/** 認証情報らしき文字列 */
+const SECRET_PATTERNS = [
+  { re: /\bsk-[A-Za-z0-9_-]{16,}/, label: "API キーらしき文字列（sk-...）" },
+  { re: /\bgh[pousr]_[A-Za-z0-9]{16,}/, label: "GitHub トークンらしき文字列（ghp_...）" },
+  { re: /\bAKIA[0-9A-Z]{12,}/, label: "AWS アクセスキーらしき文字列（AKIA...）" },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}/, label: "Slack トークンらしき文字列（xox...）" },
+  { re: /(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S{6,}/i, label: "パスワード／シークレットらしき記述" },
+];
+
+/** auto モードで無効化される「広すぎる allow」 */
+function isBroadAllow(rule) {
+  return (
+    /^Bash\(\*\)$/.test(rule) ||
+    /^Bash\([^)]*\*\)$/.test(rule) && !/\s/.test(rule.slice(5, -1).replace("*", "")) ||
+    /^(npm|pnpm|yarn|bun) run \*/.test(rule) ||
+    /^Bash\((npm|pnpm|yarn|bun) run \*\)$/.test(rule) ||
+    rule === "Agent" ||
+    rule === "*"
+  );
+}
+
+function computeWarnings(st) {
+  const w = [];
+  const md = buildClaudeMd(st);
+  const lineCount = md.split("\n").length;
+
+  if (lineCount > 200) {
+    w.push({
+      level: "warn",
+      msg: "CLAUDE.md が " + lineCount + " 行あります。200 行を超えると遵守率が下がります。パススコープルール（.claude/rules/）かスキルへ移してください。",
+    });
+  }
+
+  // シークレット検出。CLAUDE.md と settings.json は git にコミットされる。
+  const haystack = [md, JSON.stringify(buildSettings(st)), buildMcpJson(st)].join("\n");
+  for (const p of SECRET_PATTERNS) {
+    if (p.re.test(haystack)) {
+      w.push({ level: "error", msg: p.label + " が含まれています。これらのファイルは git にコミットされます。値は環境変数に逃がしてください。" });
+    }
+  }
+
+  if (st.perms.defaultMode === "bypassPermissions") {
+    w.push({ level: "error", msg: "bypassPermissions は隔離されたコンテナ・VM 専用です。確認を減らしたいだけなら auto モードを使ってください。" });
+  }
+  if (st.perms.defaultMode === "dontAsk" && !st.perms.allow.length) {
+    w.push({ level: "warn", msg: "dontAsk は allow に無いものをすべて拒否します。必要なツールを allow に列挙してください。" });
+  }
+
+  const broad = st.perms.allow.filter(isBroadAllow);
+  if (broad.length) {
+    w.push({ level: "warn", msg: "広すぎる allow（" + broad.join(", ") + "）は auto モードに入ると無効化されます。`Bash(npm test)` のように具体化してください。" });
+  }
+
+  const denies = st.perms.deny.join(" ");
+  if (st.perms.allow.length && !/\.env/.test(denies)) {
+    w.push({ level: "info", msg: "deny に `Read(.env)` を入れておくと、認証情報を読ませない確実な防御になります。" });
+  }
+
+  // 名前の重複・書式
+  const named = [
+    ["サブエージェント", st.agents],
+    ["スキル", st.skills],
+    ["ルール", st.rules],
+  ];
+  for (const [label, items] of named) {
+    const names = items.map((i) => i.name).filter(Boolean);
+    const dup = names.filter((n, i) => names.indexOf(n) !== i);
+    if (dup.length) w.push({ level: "error", msg: label + "の名前が重複しています: " + [...new Set(dup)].join(", ") });
+    for (const n of names) {
+      if (!isKebab(n)) w.push({ level: "warn", msg: label + '「' + n + '」の名前は小文字のケバブケース（例: code-review）にしてください。ディレクトリ名がそのままコマンド名になります。' });
+    }
+  }
+  for (const s of st.skills) {
+    if (s.name && !s.description) w.push({ level: "warn", msg: "スキル「" + s.name + "」に description がありません。Claude はこれを見て使うか判断するので、無いと呼ばれません。" });
+  }
+  for (const a of st.agents) {
+    if (a.name && !a.description) w.push({ level: "warn", msg: "サブエージェント「" + a.name + "」に description がありません。委譲の判断材料になります。" });
+  }
+  for (const h of st.hooks) {
+    if (h.event && !h.command) w.push({ level: "warn", msg: h.event + " フックのコマンドが空です。" });
+  }
+  for (const m of st.mcp) {
+    if (!m.name) continue;
+    if ((m.transport || "http") === "stdio" && !m.command) {
+      w.push({ level: "warn", msg: "MCP サーバー「" + m.name + "」は stdio ですが command が空です。" });
+    }
+    if ((m.transport || "http") !== "stdio" && !m.url) {
+      w.push({ level: "warn", msg: "MCP サーバー「" + m.name + "」の URL が空です。" });
+    }
+  }
+  return w;
+}
+
+/* ------------------------------------------------------------------
+   5. DOM 生成のヘルパー
+   ------------------------------------------------------------------ */
+
+function h(tag, props, children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") el.className = v;
+    else if (k === "text") el.textContent = v;
+    else if (k === "html") el.innerHTML = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const c of children || []) if (c) el.appendChild(c);
+  return el;
+}
+
+/** ラベル付きのフィールドを作る */
+function field(labelText, input, hint) {
+  const kids = [];
+  if (labelText) kids.push(h("label", { text: labelText }));
+  kids.push(input);
+  if (hint) kids.push(h("p", { class: "hint", text: hint }));
+  return h("div", { class: "field" }, kids);
+}
+
+/** obj[key] を編集するテキスト入力。入力のたびに出力だけ作り直す */
+function textInput(obj, key, placeholder) {
+  const el = h("input", { type: "text", placeholder: placeholder || "" });
+  el.value = obj[key] || "";
+  el.addEventListener("input", () => { obj[key] = el.value; touched(); });
+  return el;
+}
+
+function textArea(obj, key, placeholder, rows) {
+  const el = h("textarea", { placeholder: placeholder || "", rows: rows || 4 });
+  el.value = obj[key] || "";
+  el.addEventListener("input", () => { obj[key] = el.value; touched(); });
+  return el;
+}
+
+function selectInput(obj, key, options) {
+  const el = h("select", {}, options.map(([v, label]) => h("option", { value: v, text: label })));
+  el.value = obj[key] || "";
+  el.addEventListener("change", () => { obj[key] = el.value; touched(); renderLists(); });
+  return el;
+}
+
+function checkboxInput(obj, key, labelText) {
+  const box = h("input", { type: "checkbox" });
+  box.checked = Boolean(obj[key]);
+  box.addEventListener("change", () => { obj[key] = box.checked; touched(); });
+  const id = "cb-" + Math.random().toString(36).slice(2, 9);
+  box.id = id;
+  return h("div", { class: "field sw" }, [box, h("label", { for: id, style: "margin:0", text: labelText })]);
+}
+
+/** カード（繰り返し項目 1 件分の枠） */
+function card(title, list, index, children) {
+  return h("div", { class: "card" }, [
+    h("div", { class: "card-head" }, [
+      h("span", { class: "title", text: title }),
+      h("button", {
+        class: "mini ghost danger",
+        text: "削除",
+        onclick: () => { list.splice(index, 1); touched(); renderLists(); },
+      }),
+    ]),
+    ...children,
+  ]);
+}
+
+/* ------------------------------------------------------------------
+   6. 選択肢の定義
+   ------------------------------------------------------------------ */
+
+const HOOK_EVENTS = [
+  ["SessionStart", "SessionStart — セッション開始・再開時"],
+  ["UserPromptSubmit", "UserPromptSubmit — プロンプト送信時"],
+  ["PreToolUse", "PreToolUse — ツール実行の直前（ブロックできる）"],
+  ["PermissionRequest", "PermissionRequest — 権限判断が必要になったとき"],
+  ["PostToolUse", "PostToolUse — ツール実行の成功後"],
+  ["Notification", "Notification — 通知が送られるとき"],
+  ["Stop", "Stop — 応答を終えたとき（ターン終了をブロックできる）"],
+  ["SubagentStop", "SubagentStop — サブエージェント終了時"],
+  ["PreCompact", "PreCompact — コンテキスト圧縮の前"],
+  ["SessionEnd", "SessionEnd — セッション終了時"],
+  ["InstructionsLoaded", "InstructionsLoaded — CLAUDE.md 等の読み込み時"],
+  ["Setup", "Setup — 一度きりの準備処理"],
+];
+
+const AGENT_TOOLS = ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "WebSearch"];
+
+const MODE_DESC = {
+  default: "読み取り以外は毎回確認します。使い始めや、業務コードを触るときの基本。",
+  acceptEdits: "作業ディレクトリ内の編集と基本的なファイル操作コマンドが自動で通ります。差分は後から git diff で確認する進め方向け。",
+  plan: "調査と計画は行いますが、ソースは変更しません。",
+  auto: "分類モデルが実行前にレビューし、依頼の範囲を超える操作や危険な操作だけを止めます。長い作業向け。広すぎる allow ルールはこのモードで無効化されます。",
+  dontAsk: "確認が必要な操作をすべて自動的に拒否します。allow に列挙したものだけが動くので、CI など入力できない環境向け。",
+  bypassPermissions: "⚠️ すべての確認と安全チェックを無効化します。隔離されたコンテナ・VM 以外では使わないでください。",
+};
+
+/* よく使う許可ルールの候補（クリックで追加） */
+const RULE_SUGGESTIONS = {
+  allow: ["Read", "Bash(git log *)", "Bash(git diff *)", "Bash(git status)", "Bash(ls *)"],
+  ask: ["Bash(git push *)", "Bash(gh pr create *)", "WebFetch"],
+  deny: ["Read(.env)", "Read(./secrets/**)", "Edit(.env)", "Bash(rm -rf *)", "Bash(curl * | bash)"],
+};
+
+/* フックのプリセット */
+const HOOK_PRESETS = [
+  {
+    label: "編集後に Prettier",
+    event: "PostToolUse", matcher: "Edit|Write",
+    command: "jq -r '.tool_input.file_path' | xargs npx prettier --write",
+  },
+  {
+    label: "編集後に black",
+    event: "PostToolUse", matcher: "Edit|Write",
+    command: "jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r black -q",
+  },
+  {
+    label: "編集後に gofmt",
+    event: "PostToolUse", matcher: "Edit|Write",
+    command: "jq -r '.tool_input.file_path' | grep '\\.go$' | xargs -r gofmt -w",
+  },
+  {
+    label: "危険なコマンドをブロック",
+    event: "PreToolUse", matcher: "Bash",
+    command: "jq -r '.tool_input.command' | grep -Eq '(rm -rf /|git push --force|DROP TABLE)' && { echo '禁止されたコマンドです' >&2; exit 2; } || exit 0",
+  },
+  {
+    label: "入力待ちを通知（macOS）",
+    event: "Notification", matcher: "",
+    command: "osascript -e 'display notification \"Claude Code needs your attention\" with title \"Claude Code\"'",
+  },
+  {
+    label: "入力待ちを通知（Linux）",
+    event: "Notification", matcher: "",
+    command: "notify-send 'Claude Code' '入力待ちです'",
+  },
+  {
+    label: "起動時にセットアップ",
+    event: "SessionStart", matcher: "",
+    command: "npm install --silent",
+  },
+];
+
+/* サブエージェントのプリセット */
+const AGENT_PRESETS = [
+  {
+    label: "security-reviewer",
+    name: "security-reviewer",
+    description: "セキュリティ脆弱性の観点でコードをレビューする",
+    tools: ["Read", "Grep", "Glob", "Bash"],
+    model: "opus",
+    body:
+      "あなたはシニアセキュリティエンジニアです。以下の観点でコードをレビューしてください:\n\n" +
+      "- インジェクション脆弱性（SQL、XSS、コマンドインジェクション）\n" +
+      "- 認証・認可の不備\n" +
+      "- コード中のシークレットや認証情報\n" +
+      "- 安全でないデータ処理\n\n" +
+      "具体的な行番号と修正案を示してください。",
+  },
+  {
+    label: "explorer",
+    name: "explorer",
+    description: "コードベースを横断的に調査し、要約だけを返す。実装がどこにあるか探すときに使う",
+    tools: ["Read", "Grep", "Glob"],
+    model: "sonnet",
+    body:
+      "あなたは調査専門のエージェントです。依頼された対象について、関連するファイルを網羅的に探し、\n" +
+      "次の形式で簡潔に報告してください。ファイルの中身を長く引用しないこと。\n\n" +
+      "1. 結論（3 行以内）\n" +
+      "2. 関連ファイルと役割（path:line 形式）\n" +
+      "3. 呼び出し経路",
+  },
+  {
+    label: "test-writer",
+    name: "test-writer",
+    description: "既存の実装に対するテストを書き、通るまで直す",
+    tools: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+    model: "sonnet",
+    body:
+      "既存のテストの書き方に合わせてテストを追加してください。\n\n" +
+      "- 正常系だけでなく境界値と異常系を含める\n" +
+      "- 実装に合わせてテストを緩めない。失敗したらまず実装を疑う\n" +
+      "- 追加したテストが実際に通ることをコマンドで確認してから報告する",
+  },
+];
+
+/* スキルのプリセット */
+const SKILL_PRESETS = [
+  {
+    label: "deploy（手動起動）",
+    name: "deploy",
+    description: "本番環境へデプロイする手順",
+    disableModelInvocation: true,
+    body:
+      "本番デプロイを実行する。\n\n" +
+      "1. `main` ブランチが最新か確認する\n" +
+      "2. テストと型チェックを実行し、通ることを確認する\n" +
+      "3. `npm run build` でビルドする\n" +
+      "4. デプロイコマンドを実行する\n" +
+      "5. ヘルスチェックの URL を叩き、200 が返ることを確認する\n" +
+      "6. 失敗していたらロールバック手順を提示して停止する",
+  },
+  {
+    label: "fix-issue（引数あり）",
+    name: "fix-issue",
+    description: "GitHub の Issue を修正する",
+    disableModelInvocation: true,
+    body:
+      "GitHub Issue を分析して修正する: $ARGUMENTS\n\n" +
+      "1. `gh issue view` で Issue の詳細を取得する\n" +
+      "2. 記述されている問題を理解する\n" +
+      "3. 関連するファイルをコードベースから探す\n" +
+      "4. 修正を実装する\n" +
+      "5. テストを書いて実行し、修正を検証する\n" +
+      "6. Lint と型チェックが通ることを確認する\n" +
+      "7. 分かりやすいコミットメッセージを作る",
+  },
+  {
+    label: "api-conventions（知識）",
+    name: "api-conventions",
+    description: "このコードベースの API 設計規約。API を追加・変更するときに参照する",
+    disableModelInvocation: false,
+    body:
+      "# API 規約\n\n" +
+      "- URL パスは kebab-case\n" +
+      "- JSON のプロパティは camelCase\n" +
+      "- 一覧系のエンドポイントには必ずページネーションを付ける\n" +
+      "- API はパスでバージョニングする（/v1/, /v2/）",
+  },
+];
+
+/* MCP サーバーのプリセット */
+const MCP_PRESETS = [
+  { label: "Notion", name: "notion", transport: "http", url: "https://mcp.notion.com/mcp" },
+  { label: "Sentry", name: "sentry", transport: "http", url: "https://mcp.sentry.dev/mcp" },
+  { label: "Asana (SSE)", name: "asana", transport: "sse", url: "https://mcp.asana.com/sse" },
+  { label: "Playwright (stdio)", name: "playwright", transport: "stdio", command: "npx", argsRaw: "-y\n@playwright/mcp@latest" },
+];
+
+/* ------------------------------------------------------------------
+   7. 入力ペインの描画
+   ------------------------------------------------------------------ */
+
+/** data-bind を持つ静的フィールドを state と結びつける */
+function bindStaticFields() {
+  for (const el of $$("[data-bind]")) {
+    const path = el.dataset.bind;
+    const isCheck = el.type === "checkbox";
+    const apply = () => {
+      setPath(state, path, isCheck ? el.checked : el.value);
+      touched();
+      if (path === "perms.defaultMode") renderModeDesc();
+    };
+    el.addEventListener(isCheck ? "change" : "input", apply);
+    if (el.tagName === "SELECT") el.addEventListener("change", apply);
+  }
+}
+
+/** state の値を静的フィールドへ流し込む（読込・プリセット適用時） */
+function syncStaticFields() {
+  for (const el of $$("[data-bind]")) {
+    const v = getPath(state, el.dataset.bind);
+    if (el.type === "checkbox") el.checked = Boolean(v);
+    else el.value = v == null ? "" : v;
+  }
+  renderModeDesc();
+}
+
+function renderModeDesc() {
+  $("#mode-desc").textContent = MODE_DESC[state.perms.defaultMode] || "";
+}
+
+/** allow / ask / deny の一覧 */
+function renderRuleList(kind) {
+  const box = $("#list-" + kind);
+  box.textContent = "";
+  const arr = state.perms[kind];
+  if (!arr.length) {
+    box.appendChild(h("div", { class: "empty", text: "（なし）" }));
+    return;
+  }
+  arr.forEach((rule, i) => {
+    box.appendChild(h("div", { class: "rule" }, [
+      h("span", { class: "mono", text: rule }),
+      h("button", {
+        class: "mini ghost danger", text: "削除",
+        onclick: () => { arr.splice(i, 1); touched(); renderLists(); },
+      }),
+    ]));
+  });
+}
+
+function addRule(kind, value) {
+  const v = String(value || "").trim();
+  if (!v) return;
+  if (state.perms[kind].includes(v)) { toast("すでに追加されています"); return; }
+  state.perms[kind].push(v);
+  touched();
+  renderLists();
+}
+
+/** 候補チップ（allow/ask/deny） */
+function renderRuleChips(kind) {
+  const box = $("#chips-" + kind);
+  box.textContent = "";
+  const items = RULE_SUGGESTIONS[kind].slice();
+  // CLAUDE.md タブで入力したコマンドを allow の候補に足す
+  if (kind === "allow") {
+    for (const c of [state.cmds.test, state.cmds.lint, state.cmds.typecheck, state.cmds.build]) {
+      if (c) items.unshift("Bash(" + c + ")");
+    }
+  }
+  for (const it of [...new Set(items)]) {
+    if (state.perms[kind].includes(it)) continue;
+    box.appendChild(h("button", { class: "chip", text: "＋ " + it, onclick: () => addRule(kind, it) }));
+  }
+}
+
+/** フック一覧 */
+function renderHooks() {
+  const box = $("#list-hooks");
+  box.textContent = "";
+  if (!state.hooks.length) box.appendChild(h("div", { class: "empty", text: "フックはまだありません。" }));
+  state.hooks.forEach((hook, i) => {
+    box.appendChild(card(hook.event || "フック", state.hooks, i, [
+      field("イベント", selectInput(hook, "event", HOOK_EVENTS)),
+      field("matcher（ツール名。空ならすべてにマッチ）", textInput(hook, "matcher", "Edit|Write"),
+        "例: Bash / Edit|Write / mcp__.*"),
+      field("実行するコマンド", textArea(hook, "command", "npx prettier --write $CLAUDE_FILE_PATH", 3)),
+    ]));
+  });
+
+  const chips = $("#chips-hooks");
+  chips.textContent = "";
+  for (const p of HOOK_PRESETS) {
+    chips.appendChild(h("button", {
+      class: "chip", text: "＋ " + p.label,
+      onclick: () => {
+        state.hooks.push({ event: p.event, matcher: p.matcher, command: p.command });
+        touched(); renderLists();
+      },
+    }));
+  }
+}
+
+/** サブエージェント一覧 */
+function renderAgents() {
+  const box = $("#list-agents");
+  box.textContent = "";
+  if (!state.agents.length) box.appendChild(h("div", { class: "empty", text: "サブエージェントはまだありません。" }));
+  state.agents.forEach((a, i) => {
+    const toolBoxes = AGENT_TOOLS.map((t) => {
+      const cb = h("input", { type: "checkbox", id: "tool-" + i + "-" + t });
+      cb.checked = (a.tools || []).includes(t);
+      cb.addEventListener("change", () => {
+        a.tools = a.tools || [];
+        if (cb.checked) { if (!a.tools.includes(t)) a.tools.push(t); }
+        else a.tools = a.tools.filter((x) => x !== t);
+        touched();
+      });
+      return h("span", { class: "sw", style: "margin-right:12px" }, [cb, h("label", { for: cb.id, style: "margin:0", text: t })]);
+    });
+
+    box.appendChild(card(".claude/agents/" + (a.name || "…") + ".md", state.agents, i, [
+      field("name（ファイル名になる）", textInput(a, "name", "security-reviewer")),
+      field("description（委譲の判断材料。具体的に）", textInput(a, "description", "セキュリティ脆弱性の観点でコードをレビューする")),
+      field("使えるツール（絞ると危険な操作を構造的に防げる）", h("div", { class: "row" }, toolBoxes)),
+      h("div", { class: "row" }, [
+        field("model", selectInput(a, "model", [["", "（inherit）"], ["opus", "opus"], ["sonnet", "sonnet"], ["haiku", "haiku"], ["inherit", "inherit"]])),
+        field("isolation", selectInput(a, "isolation", [["", "（なし）"], ["worktree", "worktree（独立した git worktree）"]])),
+      ]),
+      field("プリロードするスキル（任意・カンマ区切り）", textInput(a, "skills", "code-review")),
+      field("システムプロンプト（本文）", textArea(a, "body", "あなたは…", 8)),
+    ]));
+  });
+
+  const chips = $("#chips-agents");
+  chips.textContent = "";
+  for (const p of AGENT_PRESETS) {
+    chips.appendChild(h("button", {
+      class: "chip", text: "＋ " + p.label,
+      onclick: () => {
+        const { label, ...rest } = p;
+        state.agents.push(JSON.parse(JSON.stringify(rest)));
+        touched(); renderLists();
+      },
+    }));
+  }
+}
+
+/** スキル一覧 */
+function renderSkills() {
+  const box = $("#list-skills");
+  box.textContent = "";
+  if (!state.skills.length) box.appendChild(h("div", { class: "empty", text: "スキルはまだありません。" }));
+  state.skills.forEach((s, i) => {
+    box.appendChild(card(".claude/skills/" + (s.name || "…") + "/SKILL.md", state.skills, i, [
+      field("name（/名前 で呼び出せる）", textInput(s, "name", "deploy")),
+      field("description（Claude が使うか判断する材料）", textInput(s, "description", "本番環境へデプロイする手順")),
+      checkboxInput(s, "disableModelInvocation", "自分で /名前 と打ったときだけ動かす（disable-model-invocation: true）"),
+      field("allowed-tools（任意）", textInput(s, "allowedTools", "Bash, Read")),
+      field("本文（$ARGUMENTS が引数に置き換わる）", textArea(s, "body", "1. …\n2. …", 8)),
+    ]));
+  });
+
+  const chips = $("#chips-skills");
+  chips.textContent = "";
+  for (const p of SKILL_PRESETS) {
+    chips.appendChild(h("button", {
+      class: "chip", text: "＋ " + p.label,
+      onclick: () => {
+        const { label, ...rest } = p;
+        state.skills.push(JSON.parse(JSON.stringify(rest)));
+        touched(); renderLists();
+      },
+    }));
+  }
+}
+
+/** MCP サーバー一覧 */
+function renderMcp() {
+  const box = $("#list-mcp");
+  box.textContent = "";
+  if (!state.mcp.length) box.appendChild(h("div", { class: "empty", text: "MCP サーバーはまだありません。" }));
+  state.mcp.forEach((m, i) => {
+    const isStdio = (m.transport || "http") === "stdio";
+    box.appendChild(card(m.name || "MCP サーバー", state.mcp, i, [
+      h("div", { class: "row" }, [
+        field("name", textInput(m, "name", "notion")),
+        field("transport", selectInput(m, "transport", [["http", "http（リモート・最も一般的）"], ["sse", "sse"], ["stdio", "stdio（ローカルプロセス）"]])),
+        field("スコープ", selectInput(m, "scope", [["local", "local（自分だけ）"], ["project", "project（.mcp.json でチーム共有）"], ["user", "user（自分の全プロジェクト）"]])),
+      ]),
+      isStdio ? field("実行コマンド", textInput(m, "command", "npx")) : field("URL", textInput(m, "url", "https://mcp.notion.com/mcp")),
+      isStdio ? field("引数（1 行に 1 つ）", textArea(m, "argsRaw", "-y\nairtable-mcp-server", 3)) : null,
+      field("環境変数（KEY=VALUE を 1 行に 1 つ）", textArea(m, "envRaw", "AIRTABLE_API_KEY=${AIRTABLE_API_KEY}", 2),
+        "値を直接書かず ${VAR} で参照すると、認証情報をコミットせずに済みます。"),
+    ].filter(Boolean)));
+  });
+
+  const chips = $("#chips-mcp");
+  chips.textContent = "";
+  for (const p of MCP_PRESETS) {
+    chips.appendChild(h("button", {
+      class: "chip", text: "＋ " + p.label,
+      onclick: () => {
+        const { label, ...rest } = p;
+        state.mcp.push(Object.assign({ scope: "project" }, JSON.parse(JSON.stringify(rest))));
+        touched(); renderLists();
+      },
+    }));
+  }
+}
+
+/** パススコープルール一覧 */
+function renderRules() {
+  const box = $("#list-rules");
+  box.textContent = "";
+  if (!state.rules.length) box.appendChild(h("div", { class: "empty", text: "ルールはまだありません。" }));
+  state.rules.forEach((r, i) => {
+    box.appendChild(card(".claude/rules/" + (r.name || "…") + ".md", state.rules, i, [
+      field("ファイル名", textInput(r, "name", "api")),
+      field("paths（1 行に 1 パターン。空なら常に読み込まれる）", textArea(r, "pathsRaw", "src/api/**/*.ts", 3),
+        "例: **/*.ts / src/**/* / src/**/*.{ts,tsx}"),
+      field("本文", textArea(r, "body", "# API 開発ルール\n\n- すべての API エンドポイントで入力バリデーションを行う", 6)),
+    ]));
+  });
+}
+
+function renderLists() {
+  for (const k of ["allow", "ask", "deny"]) { renderRuleList(k); renderRuleChips(k); }
+  renderHooks();
+  renderAgents();
+  renderSkills();
+  renderMcp();
+  renderRules();
+  renderOutput();
+}
+
+/* ------------------------------------------------------------------
+   8. 出力ペインの描画
+   ------------------------------------------------------------------ */
+
+let currentFiles = [];
+
+function renderOutput() {
+  currentFiles = buildFiles(state);
+  if (activeFile >= currentFiles.length) activeFile = 0;
+
+  // 警告
+  const wbox = $("#warnings");
+  wbox.textContent = "";
+  for (const w of computeWarnings(state)) {
+    wbox.appendChild(h("div", { class: "warning " + w.level, text: w.msg }));
+  }
+
+  // ファイルタブ
+  const tabs = $("#filetabs");
+  tabs.textContent = "";
+  currentFiles.forEach((f, i) => {
+    tabs.appendChild(h("button", {
+      role: "tab",
+      "aria-selected": String(i === activeFile),
+      text: f.path,
+      onclick: () => { activeFile = i; renderOutput(); },
+    }));
+  });
+
+  const file = currentFiles[activeFile];
+  $("#filepath").textContent = file ? file.path : "";
+  $("#output").textContent = file
+    ? file.content
+    : "左のフォームに入力すると、ここに生成結果が出ます。\n\n" +
+      "まずは上部の「プリセットを選ぶ…」から言語を選ぶと、一通りの雛形が入ります。";
+}
+
+/* ------------------------------------------------------------------
+   9. 保存・書き出し
+   ------------------------------------------------------------------ */
+
+let saveTimer = null;
+/** 入力があったときの共通処理（localStorage への保存と出力更新） */
+function touched() {
+  renderOutput();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 300);
+}
+
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 無視 */ }
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    state = Object.assign(emptyState(), JSON.parse(raw));
+    return true;
+  } catch (e) { return false; }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------- ZIP（無圧縮 store 形式。外部ライブラリを使わない） ---------- */
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** files: [{ path, content }] → ZIP の Blob */
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const name = enc.encode(f.path);
+    const data = enc.encode(f.content);
+    const crc = crc32(data);
+
+    const local = new Uint8Array(30 + name.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);      // 展開に必要なバージョン
+    lv.setUint16(6, 0x0800, true);  // ファイル名は UTF-8
+    lv.setUint16(8, 0, true);       // 無圧縮
+    lv.setUint16(10, 0, true);      // 時刻
+    lv.setUint16(12, 0x21, true);   // 日付（1980-01-01）
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, data.length, true);
+    lv.setUint32(22, data.length, true);
+    lv.setUint16(26, name.length, true);
+    lv.setUint16(28, 0, true);
+    local.set(name, 30);
+
+    const cen = new Uint8Array(46 + name.length);
+    const cv = new DataView(cen.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);      // 作成バージョン
+    cv.setUint16(6, 20, true);      // 展開に必要なバージョン
+    cv.setUint16(8, 0x0800, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0x21, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, name.length, true);
+    cv.setUint32(42, offset, true);
+    cen.set(name, 46);
+
+    parts.push(local, data);
+    central.push(cen);
+    offset += local.length + data.length;
+  }
+
+  const centralSize = central.reduce((n, c) => n + c.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, offset, true);
+
+  return new Blob([...parts, ...central, end], { type: "application/zip" });
+}
+
+/* ------------------------------------------------------------------
+   10. プリセット
+   ------------------------------------------------------------------ */
+
+const PRESETS = {
+  node: {
+    meta: { project: "my-app", lang: "TypeScript / Node 22", pm: "pnpm", summary: "" },
+    cmds: { dev: "pnpm dev", build: "pnpm build", test: "pnpm test", testOne: "pnpm test -- path/to/file.test.ts", lint: "pnpm lint", typecheck: "pnpm typecheck" },
+    style: { indent: "space2", modules: "esm", extra: "import は可能な限り分割代入する（例: import { foo } from 'bar'）" },
+    workflow: { branch: "feature/<issue番号>-<短い説明>", commit: "Conventional Commits（feat: / fix: / chore:）", extra: "!一連のコード変更が終わったら必ず pnpm typecheck を実行する\nパフォーマンスのため、テストスイート全体ではなく単体のテストを優先して実行する" },
+    perms: { defaultMode: "acceptEdits", allow: ["Bash(pnpm test)", "Bash(pnpm lint)", "Bash(pnpm typecheck)", "Bash(git log *)", "Bash(git diff *)"], ask: ["Bash(git push *)"], deny: ["Read(.env)", "Bash(rm -rf *)"], autoMemoryDisabled: false },
+    hooks: [{ event: "PostToolUse", matcher: "Edit|Write", command: "jq -r '.tool_input.file_path' | xargs npx prettier --write" }],
+  },
+  python: {
+    meta: { project: "my-service", lang: "Python 3.12", pm: "uv", summary: "" },
+    cmds: { dev: "uv run fastapi dev", build: "", test: "uv run pytest", testOne: "uv run pytest tests/test_foo.py::test_bar", lint: "uv run ruff check .", typecheck: "uv run mypy ." },
+    style: { indent: "space4", modules: "", extra: "型ヒントを必ず付ける\n公開関数には docstring を書く" },
+    workflow: { branch: "feature/<短い説明>", commit: "Conventional Commits", extra: "!コミット前に uv run ruff check . と uv run pytest を実行する" },
+    perms: { defaultMode: "acceptEdits", allow: ["Bash(uv run pytest)", "Bash(uv run ruff check .)", "Bash(git diff *)"], ask: [], deny: ["Read(.env)", "Bash(rm -rf *)"], autoMemoryDisabled: false },
+    hooks: [{ event: "PostToolUse", matcher: "Edit|Write", command: "jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r black -q" }],
+  },
+  go: {
+    meta: { project: "my-tool", lang: "Go 1.23", pm: "go", summary: "" },
+    cmds: { dev: "go run ./cmd/server", build: "go build ./...", test: "go test ./...", testOne: "go test ./pkg/foo -run TestBar", lint: "golangci-lint run", typecheck: "go vet ./..." },
+    style: { indent: "tab", modules: "", extra: "エラーは握りつぶさず、必ず呼び出し元へ返す\nインターフェースは利用側のパッケージで定義する" },
+    workflow: { branch: "feature/<短い説明>", commit: "Conventional Commits", extra: "!コミット前に go test ./... と go vet ./... を実行する" },
+    perms: { defaultMode: "acceptEdits", allow: ["Bash(go test ./...)", "Bash(go build ./...)", "Bash(go vet ./...)"], ask: [], deny: ["Read(.env)", "Bash(rm -rf *)"], autoMemoryDisabled: false },
+    hooks: [{ event: "PostToolUse", matcher: "Edit|Write", command: "jq -r '.tool_input.file_path' | grep '\\.go$' | xargs -r gofmt -w" }],
+  },
+  monorepo: {
+    meta: { project: "platform", lang: "TypeScript / Node 22", pm: "pnpm", summary: "apps/ と packages/ からなる pnpm ワークスペース" },
+    cmds: { dev: "pnpm --filter <app> dev", build: "pnpm -r build", test: "pnpm -r test", testOne: "pnpm --filter <pkg> test -- <file>", lint: "pnpm -r lint", typecheck: "pnpm -r typecheck" },
+    style: { indent: "space2", modules: "esm", extra: "パッケージ間の import は必ず公開エントリ（index.ts）経由にする" },
+    workflow: { branch: "feature/<scope>-<短い説明>", commit: "Conventional Commits。scope にパッケージ名を入れる", extra: "!変更したパッケージだけをテストする（pnpm -r test は最後に 1 回）\nルートの package.json に依存を足さない。各パッケージに足す" },
+    pitfalls: "packages/*/dist は生成物なので手で編集しない\nルートで pnpm install しないとワークスペースのリンクが張られない",
+    perms: { defaultMode: "acceptEdits", allow: ["Bash(pnpm -r test)", "Bash(pnpm -r typecheck)", "Bash(git diff *)"], ask: ["Bash(git push *)"], deny: ["Read(.env)", "Bash(rm -rf *)"], autoMemoryDisabled: false },
+    rules: [{ name: "api", pathsRaw: "apps/api/**/*.ts", body: "# API 開発ルール\n\n- すべての API エンドポイントで入力バリデーションを行う\n- 標準のエラーレスポンス形式を使う\n- OpenAPI 用のドキュメントコメントを付ける" }],
+  },
+};
+
+function applyPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  state = Object.assign(emptyState(), JSON.parse(JSON.stringify(p)));
+  activeFile = 0;
+  syncStaticFields();
+  renderLists();
+  save();
+  toast("プリセットを読み込みました");
+}
+
+/* ------------------------------------------------------------------
+   11. イベント登録
+   ------------------------------------------------------------------ */
+
+function initEvents() {
+  // 入力タブ
+  for (const btn of $$("#tabs button")) {
+    btn.addEventListener("click", () => {
+      for (const b of $$("#tabs button")) b.setAttribute("aria-selected", String(b === btn));
+      for (const p of $$(".panel")) p.classList.toggle("active", p.id === "panel-" + btn.dataset.tab);
+    });
+  }
+
+  // 許可ルールの追加
+  for (const kind of ["allow", "ask", "deny"]) {
+    const input = $("#in-" + kind);
+    const add = () => { addRule(kind, input.value); input.value = ""; };
+    $("#add-" + kind).addEventListener("click", add);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  }
+
+  // 繰り返し項目の追加
+  $("#add-hook").addEventListener("click", () => {
+    state.hooks.push({ event: "PostToolUse", matcher: "Edit|Write", command: "" });
+    touched(); renderLists();
+  });
+  $("#add-agent").addEventListener("click", () => {
+    state.agents.push({ name: "", description: "", tools: ["Read", "Grep", "Glob"], model: "", skills: "", isolation: "", body: "" });
+    touched(); renderLists();
+  });
+  $("#add-skill").addEventListener("click", () => {
+    state.skills.push({ name: "", description: "", disableModelInvocation: false, allowedTools: "", body: "" });
+    touched(); renderLists();
+  });
+  $("#add-mcp").addEventListener("click", () => {
+    state.mcp.push({ name: "", transport: "http", scope: "project", url: "", command: "", argsRaw: "", envRaw: "" });
+    touched(); renderLists();
+  });
+  $("#add-rule").addEventListener("click", () => {
+    state.rules.push({ name: "", pathsRaw: "", body: "" });
+    touched(); renderLists();
+  });
+
+  // 出力の操作
+  $("#btn-copy").addEventListener("click", async () => {
+    const f = currentFiles[activeFile];
+    if (!f) return;
+    try {
+      await navigator.clipboard.writeText(f.content);
+      toast("コピーしました: " + f.path);
+    } catch (e) {
+      // file:// などでクリップボードが使えない場合は選択状態にする
+      const range = document.createRange();
+      range.selectNodeContents($("#output"));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      toast("選択しました。Ctrl/Cmd+C でコピーしてください");
+    }
+  });
+
+  $("#btn-download").addEventListener("click", () => {
+    const f = currentFiles[activeFile];
+    if (!f) return;
+    downloadBlob(new Blob([f.content], { type: "text/plain;charset=utf-8" }), f.path.split("/").pop());
+  });
+
+  $("#btn-zip").addEventListener("click", () => {
+    if (!currentFiles.length) { toast("生成物がありません"); return; }
+    downloadBlob(makeZip(currentFiles), "claude-config.zip");
+    toast("ZIP を保存しました");
+  });
+
+  // ヘッダーの操作
+  $("#preset").addEventListener("change", (e) => {
+    if (e.target.value) applyPreset(e.target.value);
+    e.target.value = "";
+  });
+
+  $("#btn-export").addEventListener("click", () => {
+    downloadBlob(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }), "claude-config-input.json");
+    toast("入力内容を保存しました");
+  });
+
+  $("#btn-import").addEventListener("click", () => $("#file-import").click());
+  $("#file-import").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        state = Object.assign(emptyState(), JSON.parse(reader.result));
+        activeFile = 0;
+        syncStaticFields();
+        renderLists();
+        save();
+        toast("読み込みました");
+      } catch (err) {
+        toast("読み込めませんでした: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  });
+
+  $("#btn-reset").addEventListener("click", () => {
+    if (!confirm("入力内容をすべて消します。よろしいですか？")) return;
+    state = emptyState();
+    activeFile = 0;
+    syncStaticFields();
+    renderLists();
+    save();
+    toast("消去しました");
+  });
+
+  $("#btn-theme").addEventListener("click", () => {
+    const now = document.documentElement.getAttribute("data-theme");
+    const next = now === "dark" ? "light" : now === "light" ? "" : "dark";
+    if (next) document.documentElement.setAttribute("data-theme", next);
+    else document.documentElement.removeAttribute("data-theme");
+    try { localStorage.setItem(STORAGE_KEY + "/theme", next); } catch (e) { /* 無視 */ }
+  });
+}
+
+/* ------------------------------------------------------------------
+   12. セルフテスト（?selftest=1）
+   ------------------------------------------------------------------ */
+
+function runSelfTest() {
+  const results = [];
+  const ok = (name, cond, detail) => results.push({ name, pass: Boolean(cond), detail: detail || "" });
+
+  // --- プリセットを土台に、全種類の成果物が出る状態を作る ---
+  state = Object.assign(emptyState(), JSON.parse(JSON.stringify(PRESETS.node)));
+  state.agents.push(JSON.parse(JSON.stringify((({ label, ...r }) => r)(AGENT_PRESETS[0]))));
+  state.skills.push(JSON.parse(JSON.stringify((({ label, ...r }) => r)(SKILL_PRESETS[0]))));
+  state.mcp.push({ name: "notion", transport: "http", scope: "project", url: "https://mcp.notion.com/mcp", envRaw: "" });
+  state.mcp.push({ name: "airtable", transport: "stdio", scope: "local", command: "npx", argsRaw: "-y\nairtable-mcp-server", envRaw: "AIRTABLE_API_KEY=${AIRTABLE_API_KEY}" });
+  state.rules.push({ name: "api", pathsRaw: "src/api/**/*.ts", body: "# API 開発ルール\n\n- 入力バリデーションを行う" });
+
+  const files = buildFiles(state);
+  const byPath = Object.fromEntries(files.map((f) => [f.path, f.content]));
+
+  // --- 1. ファイルが揃っているか ---
+  for (const p of ["CLAUDE.md", ".claude/settings.json", ".claude/agents/security-reviewer.md",
+                   ".claude/skills/deploy/SKILL.md", ".claude/rules/api.md", ".mcp.json"]) {
+    ok("生成: " + p, byPath[p]);
+  }
+
+  // --- 2. JSON として妥当か ---
+  let settings = null, mcp = null;
+  try { settings = JSON.parse(byPath[".claude/settings.json"]); ok("settings.json が JSON.parse を通る", true); }
+  catch (e) { ok("settings.json が JSON.parse を通る", false, e.message); }
+  try { mcp = JSON.parse(byPath[".mcp.json"]); ok(".mcp.json が JSON.parse を通る", true); }
+  catch (e) { ok(".mcp.json が JSON.parse を通る", false, e.message); }
+
+  // --- 3. settings.json の構造 ---
+  if (settings) {
+    ok("permissions.defaultMode が入っている", settings.permissions.defaultMode === "acceptEdits");
+    ok("permissions.allow が配列", Array.isArray(settings.permissions.allow));
+    ok("permissions.deny が配列", Array.isArray(settings.permissions.deny));
+    const pt = settings.hooks && settings.hooks.PostToolUse;
+    ok("hooks はイベント名 → 配列", Array.isArray(pt));
+    ok("hooks の要素が { matcher, hooks: [...] }",
+      pt && pt[0] && typeof pt[0].matcher === "string" && Array.isArray(pt[0].hooks) &&
+      pt[0].hooks[0].type === "command" && typeof pt[0].hooks[0].command === "string");
+    ok("hooks を 2 件足すと同じイベント配下に並ぶ", (() => {
+      const s2 = JSON.parse(JSON.stringify(state));
+      s2.hooks.push({ event: "PostToolUse", matcher: "Bash", command: "echo hi" });
+      s2.hooks.push({ event: "Stop", matcher: "", command: "echo done" });
+      const built = buildSettings(s2);
+      return built.hooks.PostToolUse.length === 2 && built.hooks.Stop.length === 1;
+    })());
+  }
+
+  // --- 4. .mcp.json の構造 ---
+  if (mcp) {
+    ok(".mcp.json は mcpServers を持つ", mcp.mcpServers && mcp.mcpServers.notion);
+    ok("http サーバーは url を持つ", mcp.mcpServers.notion.url === "https://mcp.notion.com/mcp");
+    ok("stdio サーバーは command と args を持つ",
+      mcp.mcpServers.airtable.command === "npx" && Array.isArray(mcp.mcpServers.airtable.args) &&
+      mcp.mcpServers.airtable.args.length === 2);
+    ok("claude mcp add コマンドも生成される", /claude mcp add --transport stdio airtable/.test(byPath["mcp-add.sh"] || ""));
+  }
+
+  // --- 5. CLAUDE.md の中身 ---
+  const md = byPath["CLAUDE.md"] || "";
+  ok("CLAUDE.md はフロントマターを持たない", !md.startsWith("---"));
+  ok("CLAUDE.md に見出しがある", md.startsWith("# my-app"));
+  ok("入力したテストコマンドが本文に含まれる", md.includes("`pnpm test`"));
+  ok("行頭 ! が IMPORTANT に変換される", md.includes("**IMPORTANT:** 一連のコード変更が終わったら必ず pnpm typecheck を実行する"));
+  ok("インデント規約が文章化される", md.includes("インデントは半角スペース 2 つ"));
+
+  // --- 6. フロントマターを持つ生成物 ---
+  const agentMd = byPath[".claude/agents/security-reviewer.md"] || "";
+  ok("サブエージェントは --- で挟まれたフロントマターを持つ", /^---\n[\s\S]*?\n---\n/.test(agentMd));
+  ok("サブエージェントに name / description がある",
+    /\nname: security-reviewer\n/.test(agentMd) && /\ndescription: /.test(agentMd));
+  ok("tools がカンマ区切りで出力される", /\ntools: Read, Grep, Glob, Bash\n/.test(agentMd));
+
+  const skillMd = byPath[".claude/skills/deploy/SKILL.md"] || "";
+  ok("スキルは --- で挟まれたフロントマターを持つ", /^---\n[\s\S]*?\n---\n/.test(skillMd));
+  ok("副作用のあるスキルに disable-model-invocation が付く", /\ndisable-model-invocation: true\n/.test(skillMd));
+
+  const ruleMd = byPath[".claude/rules/api.md"] || "";
+  ok("パススコープルールが paths フロントマターを持つ", /^---\npaths:\n {2}- "src\/api\/\*\*\/\*\.ts"\n---\n/.test(ruleMd));
+
+  // --- 7. 警告のロジック ---
+  const warnOf = (mutate) => {
+    const saved = state;
+    state = Object.assign(emptyState(), JSON.parse(JSON.stringify(saved)));
+    mutate(state);
+    const w = computeWarnings(state);
+    state = saved;
+    return w;
+  };
+  ok("200 行超で警告が出る",
+    warnOf((s) => { s.pitfalls = Array.from({ length: 210 }, (_, i) => "落とし穴 " + i).join("\n"); })
+      .some((w) => /200 行/.test(w.msg)));
+  ok("シークレットらしき文字列を検出する",
+    warnOf((s) => { s.pitfalls = "APIキーは sk-abcdefghijklmnopqrstuvwx を使う"; })
+      .some((w) => w.level === "error" && /API キー/.test(w.msg)));
+  ok("広すぎる allow に警告が出る",
+    warnOf((s) => { s.perms.allow = ["Bash(*)"]; }).some((w) => /広すぎる allow/.test(w.msg)));
+  ok("具体的な allow には警告が出ない",
+    !warnOf((s) => { s.perms.allow = ["Bash(pnpm test)"]; }).some((w) => /広すぎる allow/.test(w.msg)));
+  ok("bypassPermissions に警告が出る",
+    warnOf((s) => { s.perms.defaultMode = "bypassPermissions"; }).some((w) => w.level === "error"));
+  ok("名前の重複を検出する",
+    warnOf((s) => { s.skills = [{ name: "deploy" }, { name: "deploy" }]; }).some((w) => /重複/.test(w.msg)));
+  ok("ケバブケースでない名前に警告が出る",
+    warnOf((s) => { s.agents = [{ name: "MyAgent", description: "x" }]; }).some((w) => /ケバブケース/.test(w.msg)));
+  ok("空の入力では警告が出ない", computeWarnings(emptyState()).length === 0);
+
+  // --- 8. ZIP ---
+  const zip = makeZip(files);
+  ok("ZIP が生成される（サイズ > 0）", zip.size > 0);
+  // 手書きの ZIP 実装なので、中身を base64 で吐いて外部ツールで検証できるようにする
+  zip.arrayBuffer().then((buf) => {
+    let bin = "";
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const pre = h("pre", { id: "zipb64" });
+    pre.textContent = btoa(bin);
+    document.body.appendChild(pre);
+  });
+
+  // --- 9. 空の state では何も生成しない ---
+  ok("空の state では生成物が 0 件", buildFiles(emptyState()).length === 0);
+
+  // --- 結果表示 ---
+  const passed = results.filter((r) => r.pass).length;
+  const failed = results.length - passed;
+  const body = results.map((r) => (r.pass ? "PASS  " : "FAIL  ") + r.name + (r.detail ? " — " + r.detail : "")).join("\n");
+  const pre = h("pre", { id: "selftest" });
+  pre.textContent = "SELFTEST: " + passed + " passed, " + failed + " failed\n\n" + body;
+  document.body.insertBefore(pre, document.body.firstChild);
+}
+
+/* ------------------------------------------------------------------
+   13. 起動
+   ------------------------------------------------------------------ */
+
+function init() {
+  try {
+    const theme = localStorage.getItem(STORAGE_KEY + "/theme");
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) { /* 無視 */ }
+
+  bindStaticFields();
+  initEvents();
+
+  // ?preset=node のように指定すると、その雛形で開く（デモ・共有用）
+  const preset = new URLSearchParams(location.search).get("preset");
+  if (preset && PRESETS[preset]) {
+    applyPreset(preset);
+  } else {
+    load();
+    syncStaticFields();
+    renderLists();
+  }
+
+  if (/[?&]selftest=1/.test(location.search)) runSelfTest();
+}
+
+init();
+</script>
+</body>
+</html>
