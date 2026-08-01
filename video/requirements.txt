@@ -1,0 +1,15 @@
+# 動画生成に必要なパッケージ
+#
+# pyopenjtalk-plus : 日本語の音声合成（OpenJTalk）。辞書と音声モデルを wheel に同梱
+#                    しているため、完全にオフラインで動作する。
+# imageio-ffmpeg   : ffmpeg のバイナリ同梱。H.264 と AAC のエンコードに使う。
+#                    Playwright 同梱の ffmpeg は音声コーデックを持たないので使わない。
+#
+#   pip install -r requirements.txt
+#
+# スライドの描画には Chromium を使うが、これは Playwright 経由で
+# /opt/pw-browsers/ 配下に既に入っているものを直接呼び出すため、
+# ここには含めていない。
+
+pyopenjtalk-plus>=0.4.1
+imageio-ffmpeg>=0.6.0

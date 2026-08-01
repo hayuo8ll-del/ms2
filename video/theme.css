@@ -1,0 +1,261 @@
+/*
+ * スライドのスタイル
+ *
+ * この環境で使える日本語フォントは IPAGothic / IPAPGothic の Regular のみで、
+ * Bold フェイスが存在しない。ブラウザの合成ボールドは輪郭が潰れやすいので、
+ * 強調は「色」と「サイズ」で表現し、font-weight には頼らない方針にしている。
+ */
+
+:root {
+  --bg-top: #12171f;
+  --bg-bottom: #0a0d13;
+  --fg: #eef2f7;
+  --fg-dim: #9aa7b8;
+  --accent: #e8927c;
+  --accent-soft: #f2c9bd;
+  --rule: #2a3341;
+  --code-bg: #0d1117;
+  --caption-bg: rgba(6, 9, 14, 0.88);
+
+  --pad-x: 110px;
+  /* 字幕は最大 2 行になるので、2 行ぶん（46px * 1.5 * 2）＋上下 padding を確保する。
+     ここを削ると本文が字幕帯に食い込む。 */
+  --caption-h: 250px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+}
+
+body {
+  background: linear-gradient(170deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+  color: var(--fg);
+  font-family: "IPAPGothic", "IPAGothic", sans-serif;
+  font-size: 34px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 全体構造 ---------- */
+
+.slide {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chapter {
+  position: absolute;
+  top: 52px;
+  left: var(--pad-x);
+  font-size: 28px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.chapter::after {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 3px;
+  margin-top: 14px;
+  background: var(--accent);
+}
+
+.body {
+  flex: 1;
+  padding: 140px var(--pad-x) var(--caption-h);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+h1 {
+  font-size: 78px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+
+h2 {
+  font-size: 62px;
+  line-height: 1.35;
+  margin-bottom: 46px;
+}
+
+.lead {
+  font-size: 40px;
+  color: var(--fg-dim);
+  margin-top: 30px;
+}
+
+/* ---------- タイトルスライド ---------- */
+
+.layout-title .body {
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.layout-title h1 {
+  font-size: 96px;
+}
+
+.layout-title .rule {
+  width: 180px;
+  height: 5px;
+  background: var(--accent);
+  margin: 46px 0 40px;
+}
+
+/* ---------- 箇条書き ---------- */
+
+ul.bullets {
+  list-style: none;
+}
+
+ul.bullets li {
+  position: relative;
+  font-size: 46px;
+  line-height: 1.55;
+  padding: 22px 0 22px 62px;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--rule);
+}
+
+ul.bullets li:last-child {
+  border-bottom: none;
+}
+
+ul.bullets li::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 40px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--rule);
+}
+
+/* 現在読み上げている項目。色とサイズだけで差をつける */
+ul.bullets li.on {
+  color: var(--fg);
+  font-size: 50px;
+}
+
+ul.bullets li.on::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 8px rgba(232, 146, 124, 0.16);
+}
+
+ul.bullets li.off {
+  opacity: 0.28;
+}
+
+/* ---------- コード ---------- */
+
+/* font-size は行数に応じて build.py が inline で指定する。
+   ここの値は指定が無かった場合の保険。 */
+pre.code {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-left: 5px solid var(--accent);
+  border-radius: 10px;
+  padding: 38px 44px;
+  font-family: "DejaVu Sans Mono", "IPAGothic", monospace;
+  font-size: 34px;
+  line-height: 1.65;
+  color: #d7e2f0;
+  overflow: hidden;
+  white-space: pre;
+}
+
+pre.code .cmt {
+  color: #6f7f93;
+}
+
+pre.code .cmd {
+  color: var(--accent-soft);
+}
+
+/* ---------- 対比（2カラム）---------- */
+
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 46px;
+}
+
+.compare .col {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 36px 40px;
+}
+
+.compare .col.bad {
+  border-top: 5px solid #7d8794;
+}
+
+.compare .col.good {
+  border-top: 5px solid var(--accent);
+}
+
+.compare .col .label {
+  font-size: 30px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin-bottom: 20px;
+}
+
+.compare .col.good .label {
+  color: var(--accent);
+}
+
+.compare .col .text {
+  font-size: 38px;
+  line-height: 1.6;
+}
+
+/* ---------- 字幕 ---------- */
+
+.caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: var(--caption-h);
+  background: var(--caption-bg);
+  border-top: 1px solid var(--rule);
+  padding: 40px var(--pad-x) 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.caption p {
+  font-size: 46px;
+  line-height: 1.5;
+  color: #ffffff;
+}
+
+/* ---------- 進捗バー ---------- */
+
+.progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 6px;
+  background: var(--accent);
+}
