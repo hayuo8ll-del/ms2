@@ -342,6 +342,7 @@ PR の自動レビューから始めるのが導入しやすいです。
 
 ## 次に読む
 
+- 何から・どの順で自動化するか → [12 業務自動化ロードマップ](12-automation-roadmap.md)
 - 困ったときの対処 → [10 トラブルシューティング](10-troubleshooting.md)
 
 **公式ドキュメント**: https://code.claude.com/docs/en/headless / https://code.claude.com/docs/en/claude-code-on-the-web / https://code.claude.com/docs/en/github-actions / https://code.claude.com/docs/en/routines

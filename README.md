@@ -58,6 +58,7 @@ Claude Code が変更内容を提示するので、内容を確認して承認�
 | 09 | [自動化とチーム利用](docs/09-automation.md) | 非対話モード、並列実行、GitHub Actions、定期実行、Web・モバイル連携 |
 | 10 | [トラブルシューティング](docs/10-troubleshooting.md) | 動かない・重い・思った通りにならない時の対処、コスト削減 |
 | 11 | [コマンド早見表](docs/11-cheatsheet.md) | CLI フラグ／スラッシュコマンド／ショートカット／設定ファイルの一覧 |
+| 12 | [業務自動化ロードマップ](docs/12-automation-roadmap.md) | 何から自動化するか、手作業→無人実行までの 5 段階、業務別レシピ、90 日チェックリスト |
 | — | [用語集](docs/glossary.md) | エージェント的ループ、コンテキストウィンドウ、MCP などの用語解説 |
 
 ---
@@ -120,6 +121,7 @@ CLAUDE.md
 - 毎回同じ説明をしている → [06 CLAUDE.md とメモリ](docs/06-claude-md.md)
 - 承認ボタンを押し続けるのが辛い → [07 権限とセキュリティ](docs/07-permissions-security.md)
 - 定型作業を自動化したい → [08 拡張機能](docs/08-extensions.md) / [09 自動化とチーム利用](docs/09-automation.md)
+- 業務自動化を「何から・どの順で」進めるか知りたい → [12 業務自動化ロードマップ](docs/12-automation-roadmap.md)
 - コマンドをど忘れした → [11 コマンド早見表](docs/11-cheatsheet.md)
 
 ### チームに導入する人
@@ -127,6 +129,8 @@ CLAUDE.md
 [06 CLAUDE.md とメモリ](docs/06-claude-md.md) でプロジェクトのルールを共有し、
 [08 拡張機能](docs/08-extensions.md) でスキル・フックを整備、
 [09 自動化とチーム利用](docs/09-automation.md) で CI 連携まで広げる、という順序がおすすめです。
+進め方の全体設計（どの業務から、どの順で、どこまで自動化するか）は
+[12 業務自動化ロードマップ](docs/12-automation-roadmap.md) にまとめています。
 
 ---
 
