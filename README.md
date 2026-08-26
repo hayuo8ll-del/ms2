@@ -57,8 +57,10 @@ Claude Code が変更内容を提示するので、内容を確認して承認�
 | 08 | [拡張機能](docs/08-extensions.md) | スキル、フック、MCP、サブエージェント、プラグイン。どれを使うかの判断基準 |
 | 09 | [自動化とチーム利用](docs/09-automation.md) | 非対話モード、並列実行、GitHub Actions、定期実行、Web・モバイル連携 |
 | 10 | [トラブルシューティング](docs/10-troubleshooting.md) | 動かない・重い・思った通りにならない時の対処、コスト削減 |
-| 11 | [コマンド早見表](docs/11-cheatsheet.md) | CLI フラグ／スラッシュコマンド／ショートカット／設定ファイルの一覧 |
+| 11 | [コマンド早見表](docs/11-cheatsheet.md) | CLI フラグ／スラッシュコマンド／ショートカット／設定キー／環境変数の一覧 |
 | 12 | [業務自動化ロードマップ](docs/12-automation-roadmap.md) | 何から自動化するか、手作業→無人実行までの 5 段階、業務別レシピ、90 日チェックリスト |
+| 13 | [活用事例](docs/13-use-cases.md) | 業務システム・社内ツールでの実践例（テスト作成、障害調査、定型作業の自動化） |
+| 14 | [新機能まとめ](docs/14-whats-new.md) | 2026年6〜8月の主な変更。**すでに読んだ方は差分だけここで追えます** |
 | — | [用語集](docs/glossary.md) | エージェント的ループ、コンテキストウィンドウ、MCP などの用語解説 |
 
 ---
@@ -114,6 +116,12 @@ CLAUDE.md
 3. [03 基本操作](docs/03-basics.md) — 最低限の操作を覚える
 4. [04 はじめての実践](docs/04-first-tasks.md) — 実際に 1 つタスクを完了させる
 5. [05 効果的な使い方](docs/05-best-practices.md) — ここまで来ると精度が一段上がる
+6. [13 活用事例](docs/13-use-cases.md) — 自分の業務にどう当てはめるか
+
+### 以前このガイドを読んだ人
+
+[14 新機能まとめ](docs/14-whats-new.md) から読んでください。差分だけを追えます。
+**特に権限まわりは挙動が変わりました**（2026年8月14日以降、Pro / Max / Team では `auto` モードが新規セッションの既定）。
 
 ### すでに使っている人
 
@@ -122,6 +130,7 @@ CLAUDE.md
 - 承認ボタンを押し続けるのが辛い → [07 権限とセキュリティ](docs/07-permissions-security.md)
 - 定型作業を自動化したい → [08 拡張機能](docs/08-extensions.md) / [09 自動化とチーム利用](docs/09-automation.md)
 - 業務自動化を「何から・どの順で」進めるか知りたい → [12 業務自動化ロードマップ](docs/12-automation-roadmap.md)
+- 業務での具体例が見たい → [13 活用事例](docs/13-use-cases.md)
 - コマンドをど忘れした → [11 コマンド早見表](docs/11-cheatsheet.md)
 
 ### チームに導入する人
@@ -131,6 +140,7 @@ CLAUDE.md
 [09 自動化とチーム利用](docs/09-automation.md) で CI 連携まで広げる、という順序がおすすめです。
 進め方の全体設計（どの業務から、どの順で、どこまで自動化するか）は
 [12 業務自動化ロードマップ](docs/12-automation-roadmap.md) にまとめています。
+現場での具体的な進め方は [13-8 チームに広げるときの順番](docs/13-use-cases.md) を参照してください。
 
 ---
 
@@ -144,8 +154,9 @@ CLAUDE.md
 
 ## この資料について
 
-- **対象バージョン**: Claude Code v2.1 系（2026年7月時点）
-- **最終更新日**: 2026-07-31
+- **対象バージョン**: Claude Code v2.1.239（2026年8月時点）
+- **最終更新日**: 2026-08-26
+- **前回からの変更**: [14 新機能まとめ](docs/14-whats-new.md) を参照
 - **情報源**: 本資料は Anthropic 公式ドキュメント [code.claude.com/docs](https://code.claude.com/docs/en/overview) の内容を基に、日本語で再構成したものです。
 
 Claude Code は更新が非常に速いプロダクトです。細かい仕様や最新機能は、必ず公式ドキュメントおよび [変更履歴](https://code.claude.com/docs/en/changelog) もあわせて確認してください。
@@ -157,3 +168,4 @@ Claude Code は更新が非常に速いプロダクトです。細かい仕様�
 | ベストプラクティス | https://code.claude.com/docs/en/best-practices |
 | CLI リファレンス | https://code.claude.com/docs/en/cli-reference |
 | コマンド一覧 | https://code.claude.com/docs/en/commands |
+| 更新情報（週次） | https://code.claude.com/docs/en/whats-new/index |

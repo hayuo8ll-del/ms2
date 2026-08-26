@@ -99,15 +99,20 @@ claude -p "<プロンプト>" --output-format json | your_command
 | **Web 版** | Anthropic 管理のクラウド VM 上で実行 | マシンの負荷をかけずに長時間タスクを回す |
 | **エージェントチーム** | 複数セッションが共有タスクリストとメッセージで自動連携 | 議論・分担が必要な複雑な作業（実験的機能） |
 | **バックグラウンドエージェント** | `claude --bg "..."` で切り離して実行 | 別作業をしながら裏で走らせる |
+| **セッション間メッセージング** | 独立したセッション同士がテキストを送り合う | 片方の発見をもう片方に伝えたいとき |
 
 ### git worktree での並列作業
 
 ```bash
 claude -w feature-auth          # worktree を作ってそこでセッション開始
 claude -w feature-auth --tmux   # tmux セッションも作る
+
+# PR / マージリクエストのブランチから始める
+claude --worktree https://github.com/owner/repo/pull/123
+claude --worktree https://gitlab.com/group/project/-/merge_requests/42
 ```
 
-worktree ごとに独立したチェックアウトなので、**編集が衝突しません。**
+worktree ごとに独立したチェックアウトなので、**編集が衝突しません。** ファイル編集だけでなく、メインのチェックアウトに届く Bash コマンドや git のリダイレクトもブロックされます。
 
 ### バックグラウンドで走らせて後で確認する
 
@@ -124,6 +129,50 @@ claude attach 7c5dcf5d   # バックグラウンドセッションに接続
 claude logs 7c5dcf5d     # 出力を表示
 claude stop 7c5dcf5d     # 停止
 ```
+
+> worktree でコードを変更したバックグラウンドセッションは、**終了前にコミットしてプッシュします。** ドラフト PR はタスクが求めるときだけ作られ、`CLAUDE.md` に書いた git のルールにも従います。
+
+<a id="cross-session"></a>
+
+### セッション間でメッセージをやり取りする
+
+**あなたの複数のセッションが、互いにメッセージを送れます。** 片方で見つけたことを、もう片方に伝え直す手間がなくなります。
+
+```text
+決済 API を触っているセッションに、users.name が users.display_name に変わったと伝えて
+```
+
+`@` を入力すると、他のセッションを名前で指定できます。
+
+```text
+@api-worker にスキーマ移行が終わったと伝えて
+```
+
+到達できるセッションの一覧はこれで確認します。
+
+```text
+/list-agents      （/peers も同じ）
+```
+
+**押さえておくべき性質**
+
+- 送られるのは **Claude が書いたテキストだけ**。会話履歴やファイルは渡りません
+- 受信側の**権限は変わりません**。メッセージが承認の代わりになることはなく、設定を変えさせることもできません
+- メッセージ内の `/compact` などは**ただのテキストとして届き、実行されません**
+- 同一マシン内はソケット経由で、**Anthropic のサーバーを経由しません**。別マシンや Web のセッションへは Remote Control 経由で届きます
+- 別のセッションに「作業が終わったら知らせて」と依頼することもできます（1 回だけ通知。12 時間で失効）
+
+**対応環境**: macOS / Linux / WSL 2 は v2.1.224 以降、ネイティブ Windows は v2.1.234 以降。Amazon Bedrock、Claude Platform on AWS、Google Cloud の Agent Platform、Microsoft Foundry では利用できません。
+
+**受信を制御する**
+
+```json
+{
+  "crossSessionInbound": "accept"   // accept（配送） / hold（保留） / refuse（破棄）
+}
+```
+
+`/config` の **Messages from your other sessions** からも選べます。別マシンへの送信に承認を挟むなら `isolatePeerMachines: true`、組織全体で止めるなら管理設定で `SendMessage` と `ListAgents` を `deny` に入れてください。
 
 ### エージェントチーム（実験的）
 
@@ -158,9 +207,19 @@ PR の自動レビュー、Issue のトリアージなどを自動化できま�
 - **Issue のトリアージ** — ラベル付け、重複チェック、対応方針の提案
 - **`@claude` メンションでの実装依頼** — Issue や PR のコメントから作業を依頼
 
-### GitLab CI/CD
+### GitLab CI/CD と GitLab 連携
 
 GitLab のパイプラインにも組み込めます。詳細は [公式ドキュメント](https://code.claude.com/docs/en/gitlab-ci-cd) を参照してください。
+
+GitLab 側の連携も強化されています。
+
+| 機能 | 内容 |
+| --- | --- |
+| worktree | `claude --worktree <マージリクエストURL>` で MR のブランチから開始 |
+| エージェントビュー | MR に紐づくセッションを `!N` として表示 |
+| フッター | `glab auth login` 済みなら `MR !N` バッジを表示（状態で色分け） |
+| マーケットプレイス | `gitlab.com` の URL をそのままクローン（ネストしたサブグループも可） |
+| セキュリティ | `glpat-` / `glrt-` などのトークンを秘匿し、`glab` の設定を `gh` と同様に保護 |
 
 ### PR の自動修正（Auto-fix）
 
@@ -210,6 +269,16 @@ PR のブランチ上でこのコマンドを実行すると、Claude Code が `
 | --- | --- | --- |
 | **GitHub App** | オンボーディング時に Claude GitHub App を認可 | ブラウザから始める人、Auto-fix を使いたいチーム |
 | **`/web-setup`** | ターミナルで実行し、ローカルの `gh` トークンを同期 | すでに `gh` を使っている個人開発者 |
+
+### セルフホスト環境（Team / Enterprise パブリックベータ）
+
+**クラウドセッションを自社のインフラで動かせます。** 社内ネットワーク内のサービスにアクセスできるため、業務システムの開発と相性が良い機能です。
+
+```bash
+claude self-hosted-runner setup
+```
+
+Owner が管理設定で **Allow self-hosted environments** を有効にしたうえで、自社のマシンやコンテナでランナーを起動します。claude.ai・モバイル・デスクトップ・`claude --cloud` からその環境を選ぶと、そのセッションは自社ネットワーク内で動きます。
 
 ### ターミナル → Web
 
@@ -344,5 +413,6 @@ PR の自動レビューから始めるのが導入しやすいです。
 
 - 何から・どの順で自動化するか → [12 業務自動化ロードマップ](12-automation-roadmap.md)
 - 困ったときの対処 → [10 トラブルシューティング](10-troubleshooting.md)
+- 業務での具体的な使い方 → [13 活用事例](13-use-cases.md)
 
 **公式ドキュメント**: https://code.claude.com/docs/en/headless / https://code.claude.com/docs/en/claude-code-on-the-web / https://code.claude.com/docs/en/github-actions / https://code.claude.com/docs/en/routines

@@ -42,6 +42,7 @@
 | `claude attach <id>` / `logs <id>` / `stop <id>` / `rm <id>` | バックグラウンドセッションの操作 |
 | `claude auto-mode defaults` | auto モードの分類ルールを JSON で出力 |
 | `claude setup-token` | 長期有効な OAuth トークンを生成 |
+| `claude self-hosted-runner setup` | セルフホスト環境のランナーを構築（Team / Enterprise） |
 
 ### よく使うフラグ
 
@@ -79,7 +80,7 @@
 | フラグ | 説明 |
 | --- | --- |
 | `--add-dir` | 作業ディレクトリを追加 |
-| `-w`, `--worktree` | git worktree を作ってそこで作業 |
+| `-w`, `--worktree` | git worktree を作ってそこで作業。PR / マージリクエストの URL を渡すとそのブランチから開始 |
 | `--tmux` | worktree 用の tmux セッションを作る |
 
 **出力**
@@ -155,8 +156,10 @@
 | `/hooks` | 設定されているフックを閲覧 |
 | `/mcp` | MCP サーバーの接続を管理 |
 | `/plugins` | プラグインを管理 |
-| `/subtask <指示>` | サブエージェントに脇道タスクを渡す |
+| `/subtask <指示>` | 会話を引き継いだサブエージェント（fork）に脇道タスクを渡す |
 | `/tasks` | バックグラウンド作業の一覧 |
+| `/list-agents`（`/peers`） | メッセージを送れる他のセッションを一覧表示 |
+| `/reload-plugins` | プラグインを再読み込み |
 
 ### 開発ワークフロー
 
@@ -164,12 +167,13 @@
 | --- | --- |
 | `/plan` | プランモードに切り替え |
 | `/diff` | 未コミットの変更を差分ビューアで表示 |
-| `/code-review [レベル] [--fix]` | 差分をバグ観点でレビュー |
+| `/code-review [レベル] [--fix]`（`/review`） | 差分をバグ観点でレビュー。バックグラウンドで実行され、レベル省略時は前回の指定を再利用 |
+| `/design [指示]` | UI の設計案を編集可能なアートボードとして描く（リサーチプレビュー） |
+| `/claude-security` | 複数エージェントによる脆弱性スキャン（プラグインの導入が必要） |
 | `/security-review` | 差分をセキュリティ観点でチェック |
 | `/simplify` | コードの簡素化を提案・適用 |
 | `/test [ファイル]` | テストを実行して失敗をデバッグ |
 | `/verify` | 変更が要件を満たすか検証 |
-| `/review [PR番号]` | GitHub PR をレビュー |
 | `/pr-feedback` | オープン中の PR のフィードバックを取得 |
 | `/pr-summary` | オープン中の PR の変更を要約 |
 | `/autofix-pr` | PR を監視して CI 失敗時に修正をプッシュ |
@@ -317,11 +321,49 @@ your-project/
 
 ---
 
-## 11-5. 権限モード早見
+## 11-5. 主な設定キー
+
+`~/.claude/settings.json` や `.claude/settings.json` に書きます。
+
+| キー | 内容 |
+| --- | --- |
+| `permissions.defaultMode` | 既定の権限モード（`auto` はユーザー設定にのみ書ける） |
+| `permissions.allow` / `ask` / `deny` | ツールごとの許可・確認・拒否ルール |
+| `outputStyle` | 出力スタイル（`Concise` / `Proactive` / `Explanatory` / `Learning`） |
+| `model` | 使用するモデル |
+| `crossSessionInbound` | 他セッションからのメッセージの扱い（`accept` / `hold` / `refuse`） |
+| `isolatePeerMachines` | 別マシンへのメッセージ送信に承認を要求する |
+| `keybindingFlavor` | `"readline"` にすると `Ctrl+W` が空白まで削除する |
+| `spellcheck` | 入力中の綴り誤りに下線を引く |
+| `emojiCompletionEnabled` | 絵文字ショートコードの補完 |
+| `autoMemoryEnabled` | オートメモリの有効・無効 |
+| `sandbox.filesystem.disabled` | ファイルシステム隔離だけを外す |
+| `claudeMdExcludes` | 読み込まない CLAUDE.md をパターンで指定 |
+| `hooks` | フックの定義 |
+
+## 11-6. 主な環境変数
+
+| 変数 | 内容 |
+| --- | --- |
+| `ANTHROPIC_DEFAULT_MODEL` | 新規セッションが開始するモデル（v2.1.236 以降） |
+| `ANTHROPIC_MODEL` | 使用するモデル（設定より優先） |
+| `ANTHROPIC_API_KEY` | API キー認証 |
+| `CLAUDE_CODE_FORK_SUBAGENT` | `0` で fork モードを無効化 |
+| `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` | サブエージェントの同時実行数（既定 20） |
+| `CLAUDE_CODE_ENABLE_TODO_TOOLS` | `1` で TODO 管理ツールを再有効化 |
+| `CLAUDE_CODE_TOOL_MEMORY_LIMIT` | Bash / PowerShell ツールのメモリ上限（Linux / WSL） |
+| `CLAUDE_CODE_GOAL_CHECKIN_MINUTES` | `/goal` の待機中の確認間隔（`0` で無効） |
+| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | `1` でエージェントチームを有効化 |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | 自動圧縮を始める使用率 |
+| `USE_BUILTIN_RIPGREP` | `0` でシステムの ripgrep を使う |
+| `MAX_THINKING_TOKENS` | 思考トークンの上限（固定budget のモデルのみ） |
+
+## 11-7. 権限モード早見
 
 | モード | 確認なしで実行 | 切り替え |
 | --- | --- | --- |
 | `default`（Manual） | 読み取りのみ | `Shift+Tab` |
+| **既定** | **2026年8月14日以降、Pro / Max / Team では `auto` が新規セッションの既定** | — |
 | `acceptEdits` | 読み取り＋編集＋基本ファイル操作 | `Shift+Tab` |
 | `plan` | 読み取りのみ（編集ブロック） | `Shift+Tab` / `/plan` |
 | `auto` | ほぼすべて（分類モデルが監視） | `Shift+Tab`（条件を満たす場合） |

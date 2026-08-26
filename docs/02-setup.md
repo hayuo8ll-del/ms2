@@ -223,7 +223,17 @@ GitHub を使うなら `gh` CLI を入れておくと、Issue の作成・PR の
 brew install gh && gh auth login
 ```
 
-### 3. ターミナルの設定（改行を打ちやすくする）
+### 3. 使うモデルを決めておく
+
+`/model` で選ぶと、その選択は次回以降のセッションにも引き継がれます。環境変数で既定を決めることもできます。
+
+```bash
+export ANTHROPIC_DEFAULT_MODEL=sonnet   # 新規セッションが開始するモデル（v2.1.236 以降）
+```
+
+この変数は、`--model`・`ANTHROPIC_MODEL`・設定ファイルの `model` のいずれも指定が無いときにだけ効きます。
+
+### 4. ターミナルの設定（改行を打ちやすくする）
 
 複数行入力をしたいとき、`Shift+Enter` が効かない環境があります。VS Code、Cursor、Alacritty、Zed を使っている場合は、セッション内で以下を実行するとキーバインドが設定されます。
 
