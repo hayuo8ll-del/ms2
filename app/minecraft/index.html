@@ -149,6 +149,33 @@ fieldset {
 }
 legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
 
+/* ---------- 入力モード ---------- */
+.modes { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.modes button {
+  flex: 1 1 auto; padding: 7px 10px; font-size: 13px; background: var(--panel-2);
+  border-radius: var(--radius); color: var(--muted);
+}
+.modes button[aria-selected="true"] {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+
+.drop {
+  border: 2px dashed var(--line); border-radius: var(--radius);
+  padding: 22px 16px; text-align: center; cursor: pointer; background: var(--panel);
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px;
+}
+.drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.drop b { font-size: 13.5px; }
+.drop span { font-size: 12px; color: var(--muted); }
+.import-info {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 12.5px; margin-bottom: 14px;
+}
+.import-info dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+.import-info dt { color: var(--muted); }
+.import-info dd { margin: 0; }
+.import-info .file { font-weight: 600; word-break: break-all; margin-bottom: 6px; }
+
 /* ---------- 形状の選択 ---------- */
 .shapes { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin-bottom: 12px; }
 .shapes button {
@@ -202,6 +229,10 @@ canvas { display: block; max-width: 100%; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
 .legend .sw-box { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
 .readout { font-size: 12px; color: var(--muted); min-height: 1.7em; }
+.empty-hint {
+  background: var(--panel); border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px; margin: 0 0 14px;
+}
 .sec-head { font-size: 13px; font-weight: 600; margin: 16px 0 8px; display: flex; align-items: center; gap: 10px; }
 .sec-head select { padding: 2px 6px; font-size: 12px; }
 .stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); }
@@ -219,6 +250,17 @@ canvas { display: block; max-width: 100%; }
 /* ---------- テキスト出力 ---------- */
 .outbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
 .outbar .path { flex: 1; font-size: 12.5px; color: var(--muted); }
+table.mats { border-collapse: collapse; width: 100%; font-size: 13px; background: var(--panel); }
+table.mats th, table.mats td { border-bottom: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+table.mats th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+table.mats td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.mats td.sw-cell { width: 1px; padding-right: 0; }
+table.mats .chip-color { display: inline-block; width: 13px; height: 13px; border-radius: 3px; border: 1px solid var(--line); vertical-align: -2px; }
+table.mats tbody tr:hover { background: var(--panel-2); }
+.mats-head { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+.mats-layer { margin-top: 18px; }
+.mats-layer > h4 { font-size: 12.5px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+
 pre.code {
   margin: 0; padding: 14px 16px;
   background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
@@ -272,18 +314,67 @@ pre.code {
 <main>
   <!-- ================= 入力ペイン ================= -->
   <section class="pane form">
-    <h2>形状</h2>
-    <div class="shapes" id="shapes"></div>
-    <p class="shape-desc" id="shape-desc"></p>
+    <div class="modes" id="modes" role="tablist">
+      <button data-mode="shape" role="tab" aria-selected="true">形から作る</button>
+      <button data-mode="import" role="tab" aria-selected="false">ファイルを読む</button>
+      <button data-mode="building" role="tab" aria-selected="false">実際の建物</button>
+    </div>
+
+    <div class="mode-panel" id="mode-shape">
+      <h2>形状</h2>
+      <div class="shapes" id="shapes"></div>
+      <p class="shape-desc" id="shape-desc"></p>
+    </div>
+
+    <div class="mode-panel" id="mode-import" hidden>
+      <h2>公開されている建築・トラップを読む</h2>
+      <p class="shape-desc">
+        配布サイトから落とした <code>.litematic</code> / <code>.schem</code> / <code>.nbt</code> を
+        そのまま図面と材料表にします。ファイルはブラウザの中だけで読み、どこにも送信しません。
+      </p>
+      <div class="drop" id="drop" tabindex="0" role="button">
+        <b>ここにファイルをドロップ</b>
+        <span>またはクリックして選ぶ（.litematic / .schem / .nbt）</span>
+      </div>
+      <input type="file" id="file-schem" accept=".litematic,.schem,.schematic,.nbt" hidden>
+      <div id="import-info"></div>
+    </div>
+
+    <div class="mode-panel" id="mode-building" hidden>
+      <h2>実際の建物から起こす</h2>
+      <p class="shape-desc">
+        現実の寸法（メートル）を入れると、1 ブロック何メートルで建てるかに合わせて
+        基礎・壁・床・窓・玄関・屋根の図面にします。
+      </p>
+      <div id="building-info"></div>
+      <fieldset>
+        <legend>寸法とスケール</legend>
+        <div id="building-params"></div>
+        <div class="row">
+          <div class="field">
+            <label for="f-bRoof">屋根</label>
+            <select id="f-bRoof"></select>
+          </div>
+          <div class="field">
+            <label for="f-bDoorSide">玄関の向き</label>
+            <select id="f-bDoorSide"></select>
+          </div>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>使うブロック</legend>
+        <div id="building-blocks"></div>
+      </fieldset>
+    </div>
 
     <div class="warnings" id="warnings"></div>
 
-    <fieldset>
+    <fieldset id="fs-params">
       <legend>寸法</legend>
       <div id="params"></div>
     </fieldset>
 
-    <fieldset>
+    <fieldset id="fs-blocks">
       <legend>コマンド出力に使うブロック</legend>
       <div id="blocks"></div>
     </fieldset>
@@ -294,11 +385,15 @@ pre.code {
     <div class="tabs" role="tablist">
       <button data-tab="plan" role="tab" aria-selected="true">平面図</button>
       <button data-tab="sheet" role="tab" aria-selected="false">全レイヤー</button>
+      <button data-tab="mats" role="tab" aria-selected="false">材料</button>
       <button data-tab="text" role="tab" aria-selected="false">テキスト</button>
       <button data-tab="cmd" role="tab" aria-selected="false">コマンド</button>
     </div>
 
     <div class="tabpanel active" id="tab-plan">
+      <p class="empty-hint" id="empty-hint" hidden>
+        まだ何も読み込んでいません。左の枠にファイルをドロップすると、ここに図面が出ます。
+      </p>
       <div class="planbar">
         <button class="mini" id="btn-prev" title="下の段へ（←）">◀</button>
         <input type="range" id="layer" min="0" max="0" value="0" aria-label="レイヤー">
@@ -323,6 +418,15 @@ pre.code {
     <div class="tabpanel" id="tab-sheet">
       <div class="stats" id="sheet-stats" style="margin-bottom:12px"></div>
       <div class="sheet" id="sheet"></div>
+    </div>
+
+    <div class="tabpanel" id="tab-mats">
+      <div class="outbar">
+        <span class="path mono">materials.txt</span>
+        <button class="mini" id="btn-copy-mats">コピー</button>
+        <label class="sw" style="margin:0"><input type="checkbox" id="mats-per-layer"> 段ごとの内訳も出す</label>
+      </div>
+      <div id="mats-out"></div>
     </div>
 
     <div class="tabpanel" id="tab-text">
@@ -385,6 +489,7 @@ const MAX_SIDE = 128;  // 幅・奥行きの上限
 
 function defaultState() {
   return {
+    mode: "shape",          // "shape" = 形から作る / "import" = ファイルを読む
     shape: "sphere",
     // 半径系
     rx: 9, ry: 9, rz: 9,
@@ -401,6 +506,15 @@ function defaultState() {
     radius: 2, steps: 8, spinCw: true, pillar: true,
     // アーチ
     span: 11, rise: 5, archDepth: 1, archThickness: 1, legs: 3,
+    // 実際の建物（メートルで入れて、スケールでブロックに換算する）
+    bWidth: 9, bDepth: 7, bFloors: 2, bFloorHeight: 3, bScale: 1,
+    bWall: 1, bRoof: "gable",
+    bWinW: 2, bWinH: 2, bWinGap: 2, bWinSill: 1,
+    bDoorSide: "south", bDoorW: 1, bDoorH: 2,
+    bWallBlock: "minecraft:oak_planks",
+    bFloorBlock: "minecraft:stone_bricks",
+    bGlassBlock: "minecraft:glass",
+    bRoofBlock: "minecraft:dark_oak_planks",
     // コマンド出力
     block: "minecraft:stone",
     stairBlock: "minecraft:oak_stairs",
@@ -443,7 +557,30 @@ const FIELDS = {
   archDepth: { label: "奥行き Z", type: "int", min: 1, max: 32 },
   archThickness: { label: "アーチの厚み", type: "int", min: 1, max: 8 },
   legs: { label: "脚の高さ", type: "int", min: 0, max: 64 },
+
+  // 実際の建物
+  bWidth: { label: "幅（m）", type: "num", min: 1, max: 128, step: 0.1 },
+  bDepth: { label: "奥行き（m）", type: "num", min: 1, max: 128, step: 0.1 },
+  bFloorHeight: { label: "階高（m）", type: "num", min: 1.5, max: 20, step: 0.1 },
+  bFloors: { label: "階数", type: "int", min: 1, max: 16 },
+  bScale: { label: "1 ブロック = 何 m", type: "num", min: 0.25, max: 5, step: 0.05 },
+  bWall: { label: "壁の厚み（ブロック）", type: "int", min: 1, max: 4 },
+  bWinW: { label: "窓の幅（ブロック）", type: "int", min: 0, max: 16 },
+  bWinH: { label: "窓の高さ（ブロック）", type: "int", min: 0, max: 16 },
+  bWinGap: { label: "窓と窓の間隔（ブロック）", type: "int", min: 1, max: 16 },
+  bWinSill: { label: "窓の下端の高さ（ブロック）", type: "int", min: 0, max: 16 },
+  bDoorW: { label: "玄関の幅（ブロック）", type: "int", min: 1, max: 8 },
+  bDoorH: { label: "玄関の高さ（ブロック）", type: "int", min: 2, max: 8 },
 };
+
+/** 建物の入力欄。上から順に並べる */
+const BUILDING_FIELDS = [
+  "bWidth", "bDepth", "bFloorHeight", "bFloors", "bScale",
+  "bWall", "bWinW", "bWinH", "bWinGap", "bWinSill", "bDoorW", "bDoorH",
+];
+
+const ROOF_KINDS = { gable: "切妻", hip: "寄棟", flat: "陸屋根（平ら）" };
+const DOOR_SIDES = { north: "北（Z-）", south: "南（Z+）", east: "東（X+）", west: "西（X-）" };
 
 const SHAPES = {
   cylinder: {
@@ -506,33 +643,102 @@ const SHAPES = {
 /* ------------------------------------------------------------------
    4. ボクセルの器
 
-   layers[y] は X-Z 平面のセル種別、dirs[y] は同じ位置の向き。
+   layers[y] は X-Z 平面の「パレット添字」（0 は必ず空気）。
+   どのマスに何のブロックかを持たせるための作りで、パラメトリック生成も
+   スケマティック読み込みも同じ器に載る。
+
+   palette[i] = { id, props, kind, dir }
+     id    … "minecraft:oak_stairs"
+     props … { facing: "east" } のようなブロック状態
+     kind  … 図面上の意味（K.BLOCK / K.EDGE / K.STAIR …）。描画とテキスト出力が使う
+     dir   … 向き（props から導出）。矢印の描画に使う
+
+   向きの違う階段は別のパレット項目になる。スケマティックの持ち方と同じ。
    labelX0 / labelZ0 は「インデックス 0 が表示上どの座標か」。
    ------------------------------------------------------------------ */
 
-function makeGrid(sx, sy, sz) {
-  const layers = [], dirs = [];
-  for (let y = 0; y < sy; y++) {
-    layers.push(new Uint8Array(sx * sz));
-    dirs.push(new Uint8Array(sx * sz));
-  }
-  return { sx, sy, sz, layers, dirs, labelX0: 0, labelZ0: 0 };
+const AIR = { id: "minecraft:air", props: {}, kind: K.EMPTY, dir: DIR.NONE };
+
+/** ブロック状態を "facing=east,half=bottom" の正規形にする（キーは辞書順） */
+function propsKey(props) {
+  const keys = Object.keys(props || {}).sort();
+  return keys.map((k) => k + "=" + props[k]).join(",");
 }
 
-function gGet(g, x, y, z) {
-  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return K.EMPTY;
+/** パレット項目を "id[状態]#種別" で一意にする。種別が違えば別項目（輪郭と内側を区別するため） */
+function entryKey(e) {
+  return e.id + "[" + propsKey(e.props) + "]#" + e.kind;
+}
+
+function makeGrid(sx, sy, sz, st) {
+  const layers = [];
+  for (let y = 0; y < sy; y++) layers.push(new Uint16Array(sx * sz));
+  return {
+    sx, sy, sz, layers,
+    labelX0: 0, labelZ0: 0,
+    source: "shape",                   // "shape" / "import" / "building"
+    palette: [AIR],
+    paletteKey: new Map([[entryKey(AIR), 0]]),
+    blocks: {
+      block: ((st && st.block) || "minecraft:stone").trim() || "minecraft:stone",
+      stairBlock: ((st && st.stairBlock) || "minecraft:oak_stairs").trim() || "minecraft:oak_stairs",
+    },
+  };
+}
+
+/** パレットに項目を登録して添字を返す。同じ内容なら使い回す */
+function paletteIndex(g, entry) {
+  const key = entryKey(entry);
+  const hit = g.paletteKey.get(key);
+  if (hit != null) return hit;
+  const i = g.palette.length;
+  g.palette.push(entry);
+  g.paletteKey.set(key, i);
+  return i;
+}
+
+/** 種別と向きから、そのグリッドで使うブロックを決める */
+function kindEntry(g, kind, dir) {
+  if (kind === K.EMPTY) return AIR;
+  if (kind === K.STAIR && DIR_NAME[dir]) {
+    return { id: g.blocks.stairBlock, props: { facing: DIR_NAME[dir] }, kind, dir };
+  }
+  return { id: g.blocks.block, props: {}, kind, dir: DIR.NONE };
+}
+
+const inBounds = (g, x, y, z) => !(x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy);
+
+/** パレット添字 */
+function gIdx(g, x, y, z) {
+  if (!inBounds(g, x, y, z)) return 0;
   return g.layers[y][z * g.sx + x];
 }
 
-function gDir(g, x, y, z) {
-  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return DIR.NONE;
-  return g.dirs[y][z * g.sx + x];
+/** パレット項目。空気なら AIR */
+function gBlock(g, x, y, z) {
+  return g.palette[gIdx(g, x, y, z)] || AIR;
 }
 
+/** 種別。空きは K.EMPTY（0）なので、真偽値としてそのまま使える */
+function gGet(g, x, y, z) {
+  return gBlock(g, x, y, z).kind;
+}
+
+function gDir(g, x, y, z) {
+  return gBlock(g, x, y, z).dir;
+}
+
+/** 種別と向きで置く。パラメトリック生成はすべてこれを通る */
 function gSet(g, x, y, z, kind, dir) {
-  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return;
-  g.layers[y][z * g.sx + x] = kind;
-  if (dir != null) g.dirs[y][z * g.sx + x] = dir;
+  if (!inBounds(g, x, y, z)) return;
+  const idx = kind === K.EMPTY ? 0 : paletteIndex(g, kindEntry(g, kind, dir || DIR.NONE));
+  g.layers[y][z * g.sx + x] = idx;
+}
+
+/** パレット添字で直接置く。読み込み側で使う */
+function gSetIdx(g, x, y, z, idx) {
+  if (!inBounds(g, x, y, z)) return;
+  g.layers[y][z * g.sx + x] = idx;
 }
 
 function countBlocks(g) {
@@ -553,11 +759,14 @@ function countLayer(g, y) {
 }
 
 function countKind(g, kind) {
-  let n = 0;
+  // 添字ごとに数えてから種別に畳む。パレットは小さいのでこのほうが速い
+  const per = new Uint32Array(g.palette.length);
   for (let y = 0; y < g.sy; y++) {
     const a = g.layers[y];
-    for (let i = 0; i < a.length; i++) if (a[i] === kind) n++;
+    for (let i = 0; i < a.length; i++) per[a[i]]++;
   }
+  let n = 0;
+  for (let i = 1; i < g.palette.length; i++) if (g.palette[i].kind === kind) n += per[i];
   return n;
 }
 
@@ -605,8 +814,9 @@ function fillSolid(g, solidFn, opts) {
     });
   }
 
+  const solidIdx = paletteIndex(g, kindEntry(g, K.BLOCK, DIR.NONE));
   for (let y = 0; y < sy; y++) {
-    for (let i = 0; i < keep[y].length; i++) if (keep[y][i]) g.layers[y][i] = K.BLOCK;
+    for (let i = 0; i < keep[y].length; i++) if (keep[y][i]) g.layers[y][i] = solidIdx;
   }
 }
 
@@ -637,12 +847,13 @@ function erode(vol, sx, sy, sz, o) {
 function markEdges(g) {
   for (let y = 0; y < g.sy; y++) {
     const src = g.layers[y].slice();
+    // src はパレット添字。0 以外なら何かが置かれている
     const at = (x, z) => (x < 0 || z < 0 || x >= g.sx || z >= g.sz) ? 0 : src[z * g.sx + x];
     for (let z = 0; z < g.sz; z++) {
       for (let x = 0; x < g.sx; x++) {
-        if (src[z * g.sx + x] !== K.BLOCK) continue;
+        if ((g.palette[src[z * g.sx + x]] || AIR).kind !== K.BLOCK) continue;
         if (!at(x - 1, z) || !at(x + 1, z) || !at(x, z - 1) || !at(x, z + 1)) {
-          g.layers[y][z * g.sx + x] = K.EDGE;
+          gSet(g, x, y, z, K.EDGE, DIR.NONE);
         }
       }
     }
@@ -661,9 +872,9 @@ function buildCylinder(st) {
   const even = !!st.even;
   const h = clampInt(st.height, 1, MAX_H);
   const X = axisOf(rx, even), Z = axisOf(rz, even);
-  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1, st);
 
-  const g = makeGrid(X.n, h, Z.n);
+  const g = makeGrid(X.n, h, Z.n, st);
   g.labelX0 = -rx; g.labelZ0 = -rz;
   fillSolid(g, (x, y, z) => {
     const dx = (x - X.center) / X.semi, dz = (z - Z.center) / Z.semi;
@@ -677,11 +888,11 @@ function buildSphere(st, dome) {
   const rx = clampInt(st.rx, 0, MAX_R), ry = clampInt(st.ry, 0, MAX_R), rz = clampInt(st.rz, 0, MAX_R);
   const even = !!st.even;
   const X = axisOf(rx, even), Y = axisOf(ry, even), Z = axisOf(rz, even);
-  if (X.n < 1 || Y.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+  if (X.n < 1 || Y.n < 1 || Z.n < 1) return makeGrid(1, 1, 1, st);
 
   const y0 = dome ? Math.ceil(Y.center) : 0;
   const sy = Y.n - y0;
-  const g = makeGrid(X.n, sy, Z.n);
+  const g = makeGrid(X.n, sy, Z.n, st);
   g.labelX0 = -rx; g.labelZ0 = -rz;
   fillSolid(g, (x, y, z) => {
     const dx = (x - X.center) / X.semi;
@@ -698,9 +909,9 @@ function buildCone(st) {
   const even = !!st.even;
   const h = clampInt(st.height, 1, MAX_H);
   const X = axisOf(rx, even), Z = axisOf(rz, even);
-  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1, st);
 
-  const g = makeGrid(X.n, h, Z.n);
+  const g = makeGrid(X.n, h, Z.n, st);
   g.labelX0 = -rx; g.labelZ0 = -rz;
   // 層ごとの半径は整数に丸めてから円にする。中途半端な半径のまま描くと、
   // 途中の層で 1 マス幅のとげが出る。丸めると、どの層も普通の円になる
@@ -736,7 +947,7 @@ function buildGable(st) {
   }
   if (!rows.length) rows.push(0);
 
-  const g = makeGrid(w, rows.length, d);
+  const g = makeGrid(w, rows.length, d, st);
   for (let y = 0; y < rows.length; y++) {
     const a = rows[y], b = Math.min(a + run - 1, Math.floor((w - 1) / 2));
     for (let x = a; x <= b; x++) {
@@ -769,7 +980,7 @@ function buildHip(st) {
   const maxInset = Math.floor(Math.min(w - 1, d - 1) / 2);
   const sy = Math.min(MAX_H, Math.floor(maxInset / run) + 1);
 
-  const g = makeGrid(w, sy, d);
+  const g = makeGrid(w, sy, d, st);
   for (let y = 0; y < sy; y++) {
     const a = y * run, b = a + run - 1;
     for (let z = 0; z < d; z++) {
@@ -804,7 +1015,7 @@ function buildShed(st) {
   const run = clampInt(st.run, 1, 8);
   const sy = Math.min(MAX_H, Math.ceil(w / run));
 
-  const g = makeGrid(w, sy, d);
+  const g = makeGrid(w, sy, d, st);
   for (let y = 0; y < sy; y++) {
     const a = y * run, b = Math.min(a + run - 1, w - 1);
     for (let x = a; x <= b; x++) {
@@ -849,7 +1060,7 @@ function buildSpiral(st) {
   const r = clampInt(st.radius, 1, 24);
   const h = clampInt(st.height, 1, MAX_H);
   const steps = spiralSteps(st);
-  const g = makeGrid(2 * r + 1, h, 2 * r + 1);
+  const g = makeGrid(2 * r + 1, h, 2 * r + 1, st);
   g.labelX0 = -r; g.labelZ0 = -r;
 
   for (let i = 0; i < steps.length; i++) {
@@ -890,7 +1101,7 @@ function buildArch(st) {
   const sx = span + 2 * t;
   const archH = rise + t + 1;                       // 輪が閉じるまでに要る高さ
   const sy = Math.min(MAX_H, legs + archH);
-  const g = makeGrid(sx, sy, d);
+  const g = makeGrid(sx, sy, d, st);
   g.labelX0 = -Math.floor(sx / 2); g.labelZ0 = 0;
 
   const cx = (sx - 1) / 2;
@@ -922,19 +1133,549 @@ function buildArch(st) {
   return g;
 }
 
+/* ---------- 実際の建物 ----------
+
+   幅・奥行き・階高をメートルで受け取り、スケール（1 ブロック = 何 m）で
+   ブロック数に換算してから、基礎 → 各階の床と壁 → 窓 → 玄関 → 屋根 の順に積む。
+   屋根は形状ジェネレータ（buildGable / buildHip）をそのまま使う。 */
+
+/** メートルをブロック数に直す。最低 1 ブロックは残す */
+function toBlocks(meters, scale) {
+  const m = Number(meters), sc = Number(scale);
+  if (!isFinite(m) || !isFinite(sc) || sc <= 0) return 1;
+  return Math.max(1, Math.round(m / sc));
+}
+
+/** 建物の寸法を、換算の過程が分かる形で返す。画面にもそのまま出す */
+function buildingDims(st) {
+  const scale = Math.min(5, Math.max(0.25, Number(st.bScale) || 1));
+  const w = Math.min(MAX_SIDE, toBlocks(st.bWidth, scale));
+  const d = Math.min(MAX_SIDE, toBlocks(st.bDepth, scale));
+  const fh = Math.max(2, Math.min(32, toBlocks(st.bFloorHeight, scale)));
+  const floors = clampInt(st.bFloors, 1, 16);
+  const wall = Math.min(clampInt(st.bWall, 1, 4), Math.max(1, Math.floor(Math.min(w, d) / 2) - 1) || 1);
+  return { scale, w, d, fh, floors, wall, bodyH: fh * floors };
+}
+
+/** src のブロックを dst に移す。パレットは dst 側に登録し直す */
+function blitGrid(dst, src, ox, oy, oz) {
+  const map = src.palette.map((e, i) => (i === 0 ? 0 : paletteIndex(dst, e)));
+  for (let y = 0; y < src.sy; y++) {
+    for (let z = 0; z < src.sz; z++) {
+      for (let x = 0; x < src.sx; x++) {
+        const idx = src.layers[y][z * src.sx + x];
+        if (!idx) continue;
+        gSetIdx(dst, ox + x, oy + y, oz + z, map[idx]);
+      }
+    }
+  }
+}
+
+/** 窓の開口を、壁の一辺に等間隔で開ける。両端は壁を残す */
+function windowRuns(span, winW, gap) {
+  const runs = [];
+  if (winW <= 0 || span < winW + 2) return runs;
+  const pitch = winW + gap;
+  const usable = span - 2;                       // 両端 1 ブロックは残す
+  const count = Math.max(0, Math.floor((usable + gap) / pitch));
+  if (!count) return runs;
+  const total = count * pitch - gap;
+  let at = 1 + Math.floor((usable - total) / 2); // 中央に寄せる
+  for (let i = 0; i < count; i++) { runs.push([at, at + winW - 1]); at += pitch; }
+  return runs;
+}
+
+function buildBuilding(st) {
+  const dim = buildingDims(st);
+  const { w, d, fh, floors, wall, bodyH } = dim;
+
+  // 屋根を先に作って高さを知る（本体の上に載せる）
+  let roof = null;
+  if (st.bRoof === "gable" || st.bRoof === "hip") {
+    const roofSt = Object.assign({}, st, {
+      width: w, depth: d, run: 1, stairs: true, gableEnds: true,
+      block: st.bRoofBlock, stairBlock: st.stairBlock,
+    });
+    roof = st.bRoof === "gable" ? buildGable(roofSt) : buildHip(roofSt);
+  }
+  const roofH = roof ? roof.sy : 1;
+
+  const g = makeGrid(w, bodyH + roofH, d, st);
+  g.source = "building";
+  g.title = "建物 " + st.bWidth + "m × " + st.bDepth + "m / " + floors + " 階（1 ブロック = " + dim.scale + "m）";
+
+  const wallIdx = paletteIndex(g, { id: st.bWallBlock, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const floorIdx = paletteIndex(g, { id: st.bFloorBlock, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const glassIdx = paletteIndex(g, { id: st.bGlassBlock, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+
+  const isWall = (x, z) => x < wall || z < wall || x >= w - wall || z >= d - wall;
+
+  for (let f = 0; f < floors; f++) {
+    const base = f * fh;
+    // 床（1 階は基礎）。壁の下まで敷いて、床が浮かないようにする
+    for (let z = 0; z < d; z++) for (let x = 0; x < w; x++) gSetIdx(g, x, base, z, floorIdx);
+    // 壁
+    for (let y = base + 1; y < base + fh; y++) {
+      for (let z = 0; z < d; z++) {
+        for (let x = 0; x < w; x++) if (isWall(x, z)) gSetIdx(g, x, y, z, wallIdx);
+      }
+    }
+    // 窓。壁を貫通させず、ガラスで塞ぐ
+    const winW = clampInt(st.bWinW, 0, 16), winH = clampInt(st.bWinH, 0, 16);
+    const gap = clampInt(st.bWinGap, 1, 16), sill = clampInt(st.bWinSill, 0, 16);
+    if (winW > 0 && winH > 0) {
+      const y0 = base + 1 + sill;
+      const y1 = Math.min(base + fh - 1, y0 + winH - 1);
+      for (const [a, b] of windowRuns(w, winW, gap)) {
+        for (let y = y0; y <= y1; y++) {
+          for (let x = a; x <= b; x++) {
+            for (let t = 0; t < wall; t++) {
+              gSetIdx(g, x, y, t, glassIdx);
+              gSetIdx(g, x, y, d - 1 - t, glassIdx);
+            }
+          }
+        }
+      }
+      for (const [a, b] of windowRuns(d, winW, gap)) {
+        for (let y = y0; y <= y1; y++) {
+          for (let z = a; z <= b; z++) {
+            for (let t = 0; t < wall; t++) {
+              gSetIdx(g, t, y, z, glassIdx);
+              gSetIdx(g, w - 1 - t, y, z, glassIdx);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 玄関。1 階の指定した面に開ける（開口なので空にする）
+  const doorW = clampInt(st.bDoorW, 1, 8);
+  const doorH = Math.min(clampInt(st.bDoorH, 2, 8), fh - 1);
+  const side = DOOR_SIDES[st.bDoorSide] ? st.bDoorSide : "south";
+  for (let y = 1; y <= doorH; y++) {
+    for (let i = 0; i < doorW; i++) {
+      for (let t = 0; t < wall; t++) {
+        if (side === "north" || side === "south") {
+          const x = Math.floor((w - doorW) / 2) + i;
+          gSetIdx(g, x, y, side === "north" ? t : d - 1 - t, 0);
+        } else {
+          const z = Math.floor((d - doorW) / 2) + i;
+          gSetIdx(g, side === "west" ? t : w - 1 - t, y, z, 0);
+        }
+      }
+    }
+  }
+
+  // 屋根
+  if (roof) blitGrid(g, roof, 0, bodyH, 0);
+  else for (let z = 0; z < d; z++) for (let x = 0; x < w; x++) gSetIdx(g, x, bodyH, z, floorIdx);
+
+  return g;
+}
+
 /** state から図面を作る。ここが唯一の入口 */
+/** 読み込んだファイルのグリッド。state には入れない（大きすぎるので保存もしない） */
+let loadedGrid = null;
+let importError = "";
+
 function build(st) {
+  if (st.mode === "import") {
+    // 読み込み前は空のグリッドを返す。描画側は「まだ無い」として扱える
+    return loadedGrid || makeGrid(1, 1, 1, st);
+  }
+  if (st.mode === "building") return buildBuilding(st);
   const shape = SHAPES[st.shape] ? st.shape : "sphere";
   return SHAPES[shape].build(st);
 }
 
 /* ------------------------------------------------------------------
-   6. 警告（ガイドと同じく、その場で気づけるものだけ出す）
+   6. スケマティック読み込み（NBT）
+
+   配布されている建築やトラップのファイルを、そのまま図面にする。
+   ブラウザの中だけで解析するので、ファイルはどこにも送られない。
+
+   対応するのは次の 3 系統。どれも中身は gzip 圧縮された NBT。
+     .nbt       ストラクチャーブロック（size / palette / blocks）
+     .schem     Sponge v2 / v3（Palette + BlockData の varint 列）
+     .litematic Litematica（BlockStatePalette + long のビットパック）
+   ------------------------------------------------------------------ */
+
+const TAG = {
+  END: 0, BYTE: 1, SHORT: 2, INT: 3, LONG: 4, FLOAT: 5, DOUBLE: 6,
+  BYTE_ARRAY: 7, STRING: 8, LIST: 9, COMPOUND: 10, INT_ARRAY: 11, LONG_ARRAY: 12,
+};
+
+/** NBT を素の JS の値にする。compound はオブジェクト、long は BigInt */
+function parseNBT(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dec = new TextDecoder("utf-8");
+  let pos = 0;
+
+  const need = (n) => {
+    if (pos + n > bytes.length) throw new Error("NBT の途中でデータが尽きました");
+  };
+  const u8 = () => { need(1); return dv.getUint8(pos++); };
+  const i8 = () => { need(1); const v = dv.getInt8(pos); pos += 1; return v; };
+  const i16 = () => { need(2); const v = dv.getInt16(pos); pos += 2; return v; };
+  const u16 = () => { need(2); const v = dv.getUint16(pos); pos += 2; return v; };
+  const i32 = () => { need(4); const v = dv.getInt32(pos); pos += 4; return v; };
+  const i64 = () => { need(8); const v = dv.getBigInt64(pos); pos += 8; return v; };
+  const f32 = () => { need(4); const v = dv.getFloat32(pos); pos += 4; return v; };
+  const f64 = () => { need(8); const v = dv.getFloat64(pos); pos += 8; return v; };
+  const str = () => {
+    const n = u16();
+    need(n);
+    const v = dec.decode(bytes.subarray(pos, pos + n));
+    pos += n;
+    return v;
+  };
+
+  function payload(type) {
+    switch (type) {
+      case TAG.BYTE: return i8();
+      case TAG.SHORT: return i16();
+      case TAG.INT: return i32();
+      case TAG.LONG: return i64();
+      case TAG.FLOAT: return f32();
+      case TAG.DOUBLE: return f64();
+      case TAG.BYTE_ARRAY: {
+        const n = i32(); need(n);
+        const v = new Int8Array(bytes.buffer.slice(bytes.byteOffset + pos, bytes.byteOffset + pos + n));
+        pos += n;
+        return v;
+      }
+      case TAG.STRING: return str();
+      case TAG.LIST: {
+        const t = u8(), n = i32();
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(payload(t));
+        return out;
+      }
+      case TAG.COMPOUND: {
+        const out = {};
+        for (;;) {
+          const t = u8();
+          if (t === TAG.END) break;
+          const name = str();
+          out[name] = payload(t);
+        }
+        return out;
+      }
+      case TAG.INT_ARRAY: {
+        const n = i32();
+        const out = new Int32Array(n);
+        for (let i = 0; i < n; i++) out[i] = i32();
+        return out;
+      }
+      case TAG.LONG_ARRAY: {
+        const n = i32();
+        const out = new BigInt64Array(n);
+        for (let i = 0; i < n; i++) out[i] = i64();
+        return out;
+      }
+      default: throw new Error("知らない NBT タグ: " + type);
+    }
+  }
+
+  const type = u8();
+  if (type !== TAG.COMPOUND) throw new Error("NBT のルートが compound ではありません");
+  str();                       // ルートの名前。使わない
+  return payload(TAG.COMPOUND);
+}
+
+const isGzip = (b) => b.length > 2 && b[0] === 0x1f && b[1] === 0x8b;
+
+async function gunzip(bytes) {
+  if (typeof DecompressionStream !== "function") throw new Error("このブラウザは gzip 展開に対応していません");
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+const AIR_IDS = new Set(["minecraft:air", "minecraft:cave_air", "minecraft:void_air", "air", "cave_air", "void_air"]);
+
+/** "minecraft:oak_stairs[facing=east,half=bottom]" を { id, props } に割る */
+function parseBlockState(str) {
+  const m = /^([^\[]+)(?:\[(.*)\])?$/.exec(String(str).trim());
+  if (!m) return { id: String(str), props: {} };
+  const id = m[1].includes(":") ? m[1] : "minecraft:" + m[1];
+  const props = {};
+  if (m[2]) {
+    for (const kv of m[2].split(",")) {
+      const i = kv.indexOf("=");
+      if (i > 0) props[kv.slice(0, i).trim()] = kv.slice(i + 1).trim();
+    }
+  }
+  return { id, props };
+}
+
+const FACING_DIR = { north: DIR.NORTH, east: DIR.EAST, south: DIR.SOUTH, west: DIR.WEST };
+
+/** 読み込んだブロックの、図面上の意味づけ */
+function entryFromBlock(id, props) {
+  const p = props || {};
+  const dir = FACING_DIR[p.facing] || DIR.NONE;
+  const kind = /_stairs$/.test(id) ? K.STAIR : K.BLOCK;
+  const e = { id, props: p, kind, dir };
+  if (p.facing === "up" || p.facing === "down") e.vert = p.facing;
+  return e;
+}
+
+/**
+ * 読み込み結果を共通のグリッドにする。
+ * entries は { id, props } の配列、idxAt(x,y,z) はそのパレット添字を返す関数。
+ */
+function importedGrid(sx, sy, sz, entries, idxAt, title) {
+  const g = makeGrid(sx, sy, sz, null);
+  g.source = "import";
+  g.title = title;
+
+  // 読み込んだパレットを、こちらのパレットに移し替える（空気は 0 に潰す）
+  const map = new Int32Array(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    map[i] = AIR_IDS.has(e.id) ? 0 : paletteIndex(g, entryFromBlock(e.id, e.props));
+  }
+  for (let y = 0; y < sy; y++) {
+    const layer = g.layers[y];
+    for (let z = 0; z < sz; z++) {
+      for (let x = 0; x < sx; x++) {
+        const raw = idxAt(x, y, z);
+        layer[z * sx + x] = raw >= 0 && raw < map.length ? map[raw] : 0;
+      }
+    }
+  }
+  return g;
+}
+
+/* ---------- ストラクチャーブロック（.nbt） ---------- */
+
+function fromStructureNbt(root) {
+  const size = root.size;
+  if (!size || size.length < 3) throw new Error("size がありません");
+  const [sx, sy, sz] = [Number(size[0]), Number(size[1]), Number(size[2])];
+  const entries = (root.palette || []).map((e) => ({
+    id: normalizeId(e.Name), props: strProps(e.Properties),
+  }));
+
+  // blocks は「置かれているところだけ」の一覧。埋まっていないところは空気
+  const idx = new Int32Array(sx * sy * sz).fill(-1);
+  for (const b of root.blocks || []) {
+    const [x, y, z] = [Number(b.pos[0]), Number(b.pos[1]), Number(b.pos[2])];
+    if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) continue;
+    idx[(y * sz + z) * sx + x] = Number(b.state);
+  }
+  return importedGrid(sx, sy, sz, entries, (x, y, z) => idx[(y * sz + z) * sx + x], null);
+}
+
+/* ---------- Sponge スケマティック（.schem） ---------- */
+
+/** BlockData は 1 ブロック 1 varint（LEB128）の並び */
+function readVarints(arr, count) {
+  const out = new Int32Array(count);
+  let pos = 0;
+  for (let i = 0; i < count; i++) {
+    let value = 0, shift = 0;
+    for (;;) {
+      if (pos >= arr.length) throw new Error("BlockData が途中で終わっています");
+      const b = arr[pos++] & 0xff;
+      value |= (b & 0x7f) << shift;
+      if ((b & 0x80) === 0) break;
+      shift += 7;
+      if (shift > 35) throw new Error("varint が長すぎます");
+    }
+    out[i] = value;
+  }
+  return out;
+}
+
+function fromSponge(root) {
+  // v3 は Schematic の下に、v2 はルート直下に入っている
+  const sch = root.Schematic || root;
+  const blocks = sch.Blocks || sch;
+  const palette = blocks.Palette || sch.Palette;
+  const data = blocks.Data || sch.BlockData;
+  const sx = Number(sch.Width), sy = Number(sch.Height), sz = Number(sch.Length);
+  if (!palette || !data || !sx || !sy || !sz) throw new Error("Sponge スケマティックの中身が足りません");
+
+  // Palette は { "minecraft:stone[...]": 添字 } の向き。配列に直す
+  const entries = [];
+  for (const [name, i] of Object.entries(palette)) {
+    entries[Number(i)] = parseBlockState(name);
+  }
+  for (let i = 0; i < entries.length; i++) if (!entries[i]) entries[i] = { id: "minecraft:air", props: {} };
+
+  const idx = readVarints(data, sx * sy * sz);
+  return importedGrid(sx, sy, sz, entries, (x, y, z) => idx[(y * sz + z) * sx + x], null);
+}
+
+/* ---------- Litematica（.litematic） ---------- */
+
+/**
+ * BlockStates は long の並びにビット幅 bits で詰められている。
+ * 1 個の値が long の境界をまたぐことがあるので、またぐ場合は 2 本から組み立てる。
+ */
+function litematicaReader(longs, bits) {
+  const mask = (1n << BigInt(bits)) - 1n;
+  const u64 = (v) => BigInt.asUintN(64, v);
+  return (i) => {
+    const start = i * bits;
+    const a = start >>> 6;
+    const b = ((i + 1) * bits - 1) >>> 6;
+    const off = BigInt(start & 63);
+    if (a >= longs.length) return 0;
+    if (a === b) return Number((u64(longs[a]) >> off) & mask);
+    if (b >= longs.length) return Number((u64(longs[a]) >> off) & mask);
+    const rest = 64n - off;
+    return Number(((u64(longs[a]) >> off) | (u64(longs[b]) << rest)) & mask);
+  };
+}
+
+function fromLitematic(root) {
+  const regions = root.Regions;
+  if (!regions || !Object.keys(regions).length) throw new Error("Regions がありません");
+
+  // 各領域の位置と大きさから、全体を囲む箱を出す
+  const boxes = [];
+  for (const [name, r] of Object.entries(regions)) {
+    const pos = r.Position || { x: 0, y: 0, z: 0 };
+    const size = r.Size || { x: 0, y: 0, z: 0 };
+    const sx = Math.abs(Number(size.x)), sy = Math.abs(Number(size.y)), sz = Math.abs(Number(size.z));
+    // 負の Size は逆向きに伸びているという意味。原点をずらして正規化する
+    const ox = Number(size.x) < 0 ? Number(pos.x) - sx + 1 : Number(pos.x);
+    const oy = Number(size.y) < 0 ? Number(pos.y) - sy + 1 : Number(pos.y);
+    const oz = Number(size.z) < 0 ? Number(pos.z) - sz + 1 : Number(pos.z);
+    if (!sx || !sy || !sz) continue;
+    boxes.push({ name, r, ox, oy, oz, sx, sy, sz });
+  }
+  if (!boxes.length) throw new Error("中身のある領域がありません");
+
+  const minX = Math.min(...boxes.map((b) => b.ox));
+  const minY = Math.min(...boxes.map((b) => b.oy));
+  const minZ = Math.min(...boxes.map((b) => b.oz));
+  const sx = Math.max(...boxes.map((b) => b.ox + b.sx)) - minX;
+  const sy = Math.max(...boxes.map((b) => b.oy + b.sy)) - minY;
+  const sz = Math.max(...boxes.map((b) => b.oz + b.sz)) - minZ;
+
+  // 領域ごとにパレットが違うので、1 本につなげてから添字をずらす
+  const entries = [];
+  const cells = new Int32Array(sx * sy * sz).fill(-1);
+  for (const b of boxes) {
+    const pal = b.r.BlockStatePalette || [];
+    const base = entries.length;
+    for (const e of pal) entries.push({ id: normalizeId(e.Name), props: strProps(e.Properties) });
+
+    const longs = b.r.BlockStates;
+    if (!longs || !longs.length) continue;
+    const bits = Math.max(2, Math.ceil(Math.log2(Math.max(pal.length, 1))));
+    const read = litematicaReader(longs, bits);
+    for (let y = 0; y < b.sy; y++) {
+      for (let z = 0; z < b.sz; z++) {
+        for (let x = 0; x < b.sx; x++) {
+          const v = read((y * b.sz + z) * b.sx + x);
+          const gx = b.ox - minX + x, gy = b.oy - minY + y, gz = b.oz - minZ + z;
+          cells[(gy * sz + gz) * sx + gx] = base + v;
+        }
+      }
+    }
+  }
+  const title = root.Metadata && root.Metadata.Name ? String(root.Metadata.Name) : null;
+  return importedGrid(sx, sy, sz, entries, (x, y, z) => cells[(y * sz + z) * sx + x], title);
+}
+
+/* ---------- 入口 ---------- */
+
+function normalizeId(name) {
+  const n = String(name || "minecraft:air");
+  return n.includes(":") ? n : "minecraft:" + n;
+}
+
+/** NBT の Properties は値が文字列とは限らないので揃える */
+function strProps(props) {
+  const out = {};
+  for (const [k, v] of Object.entries(props || {})) out[k] = String(v);
+  return out;
+}
+
+const MAX_IMPORT_SIDE = 512;
+const MAX_IMPORT_VOXELS = 8000000;
+
+function detectAndParse(root) {
+  if (root.Regions) return fromLitematic(root);
+  if (root.Schematic || (root.BlockData && root.Palette)) return fromSponge(root);
+  if (root.blocks && root.palette && root.size) return fromStructureNbt(root);
+  throw new Error("知らない形式です（.litematic / .schem / .nbt に対応しています）");
+}
+
+/** ファイル 1 つを読んでグリッドにする。失敗は例外で返す */
+async function readSchematic(file) {
+  const raw = new Uint8Array(await file.arrayBuffer());
+  const bytes = isGzip(raw) ? await gunzip(raw) : raw;
+  const root = parseNBT(bytes);
+  const g = detectAndParse(root);
+
+  if (Math.max(g.sx, g.sy, g.sz) > MAX_IMPORT_SIDE) {
+    throw new Error("大きすぎます（" + g.sx + "×" + g.sz + "×" + g.sy + "）。一辺 " + MAX_IMPORT_SIDE + " まで");
+  }
+  if (g.sx * g.sy * g.sz > MAX_IMPORT_VOXELS) {
+    throw new Error("大きすぎます（" + (g.sx * g.sy * g.sz).toLocaleString() + " マス）。" +
+      MAX_IMPORT_VOXELS.toLocaleString() + " マスまで");
+  }
+  if (!countBlocks(g)) throw new Error("空気だけで、ブロックがありません");
+
+  if (!g.title) g.title = file.name;
+  g.fileName = file.name;
+  return g;
+}
+
+/* ------------------------------------------------------------------
+   7. 警告（ガイドと同じく、その場で気づけるものだけ出す）
    ------------------------------------------------------------------ */
 
 function computeWarnings(st, g) {
   const out = [];
   const total = countBlocks(g);
+
+  if (st.mode === "building") {
+    const d = buildingDims(st);
+    const wallH = d.fh - 1;                       // 床の上に立つ壁の高さ
+    const winH = clampInt(st.bWinH, 0, 16), sill = clampInt(st.bWinSill, 0, 16);
+    if (winH > 0 && sill + winH > wallH) {
+      out.push({
+        level: "warn",
+        msg: "窓が階高に収まらないので、高さ " + Math.max(0, wallH - sill) + " ブロックに切り詰めました" +
+          "（壁の高さ " + wallH + " ブロック）。階高を上げるか、窓の下端を下げてください。",
+      });
+    }
+    if (clampInt(st.bDoorH, 2, 8) > wallH) {
+      out.push({ level: "warn", msg: "玄関が階高に収まらないので、高さ " + wallH + " ブロックに切り詰めました。" });
+    }
+    if (clampInt(st.bWinW, 0, 16) > 0 && !windowRuns(d.w, clampInt(st.bWinW, 0, 16), clampInt(st.bWinGap, 1, 16)).length) {
+      out.push({ level: "info", msg: "壁が短くて窓が入らないため、窓は作られていません。" });
+    }
+    if (d.scale !== 1) {
+      out.push({
+        level: "info",
+        msg: "1 ブロック = " + d.scale + "m で換算しています（" + state.bWidth + "m → " + d.w + " ブロック）。" +
+          "端数は四捨五入します。",
+      });
+    }
+    if (total > 20000) {
+      out.push({ level: "warn", msg: "総ブロック数が " + total.toLocaleString() + " です。コマンド出力がかなり長くなります。" });
+    }
+    return out;
+  }
+
+  if (st.mode !== "shape") {
+    // 読み込んだ図面には、形状のパラメータに関する警告は当てはまらない
+    if (total > 20000) {
+      out.push({ level: "warn", msg: "総ブロック数が " + total.toLocaleString() + " です。コマンド出力がかなり長くなります。" });
+    }
+    if (Math.max(g.sx, g.sy, g.sz) > 96) {
+      out.push({ level: "warn", msg: "図面が大きいため、描画に時間がかかることがあります。" });
+    }
+    return out;
+  }
 
   if (st.shape === "spiral") {
     const steps = spiralSteps(st);
@@ -991,7 +1732,7 @@ function recommendSteps(st) {
 }
 
 /* ------------------------------------------------------------------
-   7. テキスト・コマンド出力（グリッド → 文字列の純粋関数）
+   8. テキスト・コマンド出力（グリッド → 文字列の純粋関数）
    ------------------------------------------------------------------ */
 
 function shapeSummary(st) {
@@ -1002,6 +1743,12 @@ function shapeSummary(st) {
   return SHAPES[s].label + "  " + parts.join(" / ") + (flags.length ? "  [" + flags.join(", ") + "]" : "");
 }
 
+/** 図面のタイトル。形状／読み込み／建物のどれでも 1 行で言い切る */
+function gridTitle(st, g) {
+  if (g.title) return g.title;
+  return shapeSummary(st);
+}
+
 function cellChar(kind, dir) {
   if (kind === K.EMPTY) return ".";
   if (kind === K.STAIR) return DIR_ARROW[dir] || "#";
@@ -1010,18 +1757,152 @@ function cellChar(kind, dir) {
   return "#";
 }
 
-function buildText(st, g) {
+const SYMBOLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/**
+ * テキスト図面で使う記号をパレット項目ごとに決める。
+ *
+ * パラメトリック生成は種別が数えるほどしかないので、これまでどおり
+ * # ^ > v < + | を使う。読み込んだ建築のようにブロックの種類が多いものは、
+ * 多い順に A-Z a-z 0-9 を割り当てて凡例を付ける。
+ */
+function symbolMap(g) {
+  if (g.source === "shape") {
+    return { symbols: g.palette.map((e) => cellChar(e.kind, e.dir)), legend: null };
+  }
+  const per = new Uint32Array(g.palette.length);
+  for (let y = 0; y < g.sy; y++) {
+    const a = g.layers[y];
+    for (let i = 0; i < a.length; i++) per[a[i]]++;
+  }
+  const order = [];
+  for (let i = 1; i < g.palette.length; i++) if (per[i]) order.push(i);
+  order.sort((a, b) => per[b] - per[a]);
+
+  const symbols = new Array(g.palette.length).fill("?");
+  symbols[0] = ".";
+  const legend = [];
+  for (let n = 0; n < order.length; n++) {
+    const i = order[n];
+    const ch = n < SYMBOLS.length ? SYMBOLS[n] : "?";
+    symbols[i] = ch;
+    legend.push({ ch, entry: g.palette[i], count: per[i] });
+  }
+  return { symbols, legend };
+}
+
+/**
+ * 材料表。ブロック ID ごとに集計する。
+ * facing 違い（階段やホッパーの向き）は同じ ID なので 1 行にまとめる。
+ * 建てる前に用意する量が分かるよう、スタック換算（64 個 = 1 スタック）も出す。
+ */
+function buildMaterials(g) {
+  const per = new Uint32Array(g.palette.length);
+  const perLayer = [];
+  for (let y = 0; y < g.sy; y++) {
+    const a = g.layers[y];
+    const row = new Uint32Array(g.palette.length);
+    for (let i = 0; i < a.length; i++) { per[a[i]]++; row[a[i]]++; }
+    perLayer.push(row);
+  }
+
+  const byId = new Map();
+  for (let i = 1; i < g.palette.length; i++) {
+    if (!per[i]) continue;
+    const e = g.palette[i];
+    let row = byId.get(e.id);
+    if (!row) {
+      row = { id: e.id, name: blockShort(e), count: 0, entry: e, states: [] };
+      byId.set(e.id, row);
+    }
+    row.count += per[i];
+    const st = propsKey(e.props);
+    if (st && !row.states.includes(st)) row.states.push(st);
+  }
+
+  const items = Array.from(byId.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  for (const it of items) {
+    it.stacks = Math.floor(it.count / 64);
+    it.rest = it.count % 64;
+    it.states.sort();
+  }
+  return { items, total: items.reduce((n, it) => n + it.count, 0), per, perLayer };
+}
+
+/** 段ごとの内訳。materials.perLayer を ID 単位に畳む */
+function layerMaterials(g, mats, y) {
+  const row = mats.perLayer[y];
+  if (!row) return [];
+  const byId = new Map();
+  for (let i = 1; i < g.palette.length; i++) {
+    if (!row[i]) continue;
+    const e = g.palette[i];
+    const cur = byId.get(e.id) || { id: e.id, name: blockShort(e), count: 0, entry: e };
+    cur.count += row[i];
+    byId.set(e.id, cur);
+  }
+  return Array.from(byId.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** スタック換算の表示。64 個で 1 スタック */
+function stackLabel(count) {
+  const st = Math.floor(count / 64), rest = count % 64;
+  if (!st) return rest + " 個";
+  return st + " スタック" + (rest ? " + " + rest + " 個" : "");
+}
+
+function buildMaterialsText(st, g, withLayers) {
+  const mats = buildMaterials(g);
   const lines = [];
-  lines.push("# マイクラ図面: " + shapeSummary(st));
+  lines.push("# 材料表: " + gridTitle(st, g));
+  lines.push("# 寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）");
+  lines.push("# 合計 " + mats.total + " 個 / " + mats.items.length + " 種類");
+  lines.push("");
+  const w = Math.max(0, ...mats.items.map((i) => i.name.length));
+  for (const it of mats.items) {
+    lines.push(it.name.padEnd(w) + "  " + String(it.count).padStart(6) + " 個  (" + stackLabel(it.count) + ")");
+  }
+  if (withLayers) {
+    for (let y = 0; y < g.sy; y++) {
+      const rows = layerMaterials(g, mats, y);
+      if (!rows.length) continue;
+      lines.push("");
+      lines.push("## " + (y + 1) + " 段目");
+      for (const r of rows) lines.push("  " + r.name + " ×" + r.count);
+    }
+  }
+  return lines.join("\n");
+}
+
+/** "minecraft:oak_stairs[facing=east]" の形にする */
+function blockName(entry) {
+  const k = propsKey(entry.props);
+  return entry.id + (k ? "[" + k + "]" : "");
+}
+
+/** 表示用の短い名前。名前空間を落とす */
+function blockShort(entry) {
+  return entry.id.replace(/^minecraft:/, "");
+}
+
+function buildText(st, g) {
+  const { symbols, legend } = symbolMap(g);
+  const lines = [];
+  lines.push("# マイクラ図面: " + gridTitle(st, g));
   lines.push("# 寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）  総ブロック数 " + countBlocks(g));
   lines.push("# X は左から右（西→東）、Z は上から下（北→南）。左上のセルが x=" + g.labelX0 + ", z=" + g.labelZ0);
-  lines.push("# 凡例  # ブロック  ^ > v < 階段（矢印は上り方向）  + 隅棟  | 柱  . 空");
+  if (legend) {
+    lines.push("# 凡例  . 空");
+    for (const l of legend) lines.push("#   " + l.ch + " = " + blockName(l.entry) + "  ×" + l.count);
+  } else {
+    lines.push("# 凡例  # ブロック  ^ > v < 階段（矢印は上り方向）  + 隅棟  | 柱  . 空");
+  }
   lines.push("");
   for (let y = 0; y < g.sy; y++) {
     lines.push("## " + (y + 1) + " 段目 / 全 " + g.sy + " 段   ブロック " + countLayer(g, y));
     for (let z = 0; z < g.sz; z++) {
       let row = "";
-      for (let x = 0; x < g.sx; x++) row += cellChar(gGet(g, x, y, z), gDir(g, x, y, z));
+      for (let x = 0; x < g.sx; x++) row += symbols[gIdx(g, x, y, z)];
       lines.push(row);
     }
     lines.push("");
@@ -1030,22 +1911,17 @@ function buildText(st, g) {
 }
 
 function buildCommands(st, g) {
-  const block = (st.block || "minecraft:stone").trim() || "minecraft:stone";
-  const stairBlock = (st.stairBlock || "minecraft:oak_stairs").trim() || "minecraft:oak_stairs";
+  const names = g.palette.map((e) => blockName(e));
   const lines = [];
-  lines.push("# マイクラ図面: " + shapeSummary(st));
+  lines.push("# マイクラ図面: " + gridTitle(st, g));
   lines.push("# 実行位置が原点。~ は相対座標なので、建てたい場所で実行してください。");
   lines.push("# 総ブロック数 " + countBlocks(g));
   for (let y = 0; y < g.sy; y++) {
     for (let z = 0; z < g.sz; z++) {
       for (let x = 0; x < g.sx; x++) {
-        const kind = gGet(g, x, y, z);
-        if (!kind) continue;
-        const dir = gDir(g, x, y, z);
-        const name = (kind === K.STAIR && DIR_NAME[dir])
-          ? stairBlock + "[facing=" + DIR_NAME[dir] + "]"
-          : block;
-        lines.push("setblock ~" + (x + g.labelX0) + " ~" + y + " ~" + (z + g.labelZ0) + " " + name);
+        const idx = gIdx(g, x, y, z);
+        if (!idx) continue;
+        lines.push("setblock ~" + (x + g.labelX0) + " ~" + y + " ~" + (z + g.labelZ0) + " " + names[idx]);
       }
     }
   }
@@ -1053,7 +1929,7 @@ function buildCommands(st, g) {
 }
 
 /* ------------------------------------------------------------------
-   8. DOM ヘルパー
+   9. DOM ヘルパー
    ------------------------------------------------------------------ */
 
 const $ = (sel) => document.querySelector(sel);
@@ -1104,7 +1980,7 @@ async function copyText(text, label) {
 }
 
 /* ------------------------------------------------------------------
-   9. フォームの描画
+   10. フォームの描画
    ------------------------------------------------------------------ */
 
 function renderShapes() {
@@ -1121,6 +1997,90 @@ function renderShapes() {
   $("#shape-desc").textContent = SHAPES[state.shape].desc;
 }
 
+function renderMode() {
+  for (const b of document.querySelectorAll("#modes button")) {
+    b.setAttribute("aria-selected", String(b.dataset.mode === state.mode));
+  }
+  $("#mode-shape").hidden = state.mode !== "shape";
+  $("#mode-import").hidden = state.mode !== "import";
+  $("#mode-building").hidden = state.mode !== "building";
+  // 寸法とブロックの指定は、形から作るときだけ意味がある
+  $("#fs-params").hidden = state.mode !== "shape";
+  $("#fs-blocks").hidden = state.mode !== "shape";
+}
+
+function renderBuilding() {
+  if (state.mode !== "building") return;
+
+  const params = $("#building-params");
+  params.textContent = "";
+  params.appendChild(numberGrid(BUILDING_FIELDS, () => { renderBuildingInfo(); renderOutputs(); }));
+
+  const fillSelect = (sel, options, key) => {
+    sel.textContent = "";
+    for (const [v, label] of Object.entries(options)) {
+      sel.appendChild(h("option", { value: v, selected: state[key] === v, text: label }));
+    }
+    sel.onchange = () => { state[key] = sel.value; renderBuildingInfo(); renderOutputs(); };
+  };
+  fillSelect($("#f-bRoof"), ROOF_KINDS, "bRoof");
+  fillSelect($("#f-bDoorSide"), DOOR_SIDES, "bDoorSide");
+
+  const blocks = $("#building-blocks");
+  blocks.textContent = "";
+  for (const [key, label] of [["bWallBlock", "壁"], ["bFloorBlock", "床・基礎"],
+                              ["bGlassBlock", "窓"], ["bRoofBlock", "屋根（階段以外）"],
+                              ["stairBlock", "屋根の階段"]]) {
+    blocks.appendChild(h("div", { class: "field" }, [
+      h("label", { for: "bf-" + key, text: label }),
+      h("input", {
+        type: "text", id: "bf-" + key, value: state[key],
+        oninput: (e) => { state[key] = e.target.value; renderOutputs(); },
+      }),
+    ]));
+  }
+  renderBuildingInfo();
+}
+
+/** メートル → ブロックの換算結果を出す。端数の丸めがどう効いたかが分かるように */
+function renderBuildingInfo() {
+  const wrap = $("#building-info");
+  if (!wrap) return;
+  wrap.textContent = "";
+  const d = buildingDims(state);
+  const line = (m, blocks) => m + "m ÷ " + d.scale + " = " + blocks + " ブロック";
+  const row = (k, v) => [h("dt", { text: k }), h("dd", { text: v })];
+  wrap.appendChild(h("div", { class: "import-info" }, [
+    h("dl", {}, [
+      ...row("幅", line(state.bWidth, d.w)),
+      ...row("奥行き", line(state.bDepth, d.d)),
+      ...row("階高", line(state.bFloorHeight, d.fh)),
+      ...row("本体の高さ", d.fh + " × " + d.floors + " 階 = " + d.bodyH + " ブロック"),
+    ]),
+  ]));
+}
+
+function renderImportInfo() {
+  const wrap = $("#import-info");
+  wrap.textContent = "";
+  if (importError) {
+    wrap.appendChild(h("div", { class: "warning warn", text: importError }));
+    return;
+  }
+  if (!loadedGrid) return;
+  const g = loadedGrid;
+  const mats = buildMaterials(g);
+  const row = (k, v) => [h("dt", { text: k }), h("dd", { text: v })];
+  wrap.appendChild(h("div", { class: "import-info" }, [
+    h("div", { class: "file", text: g.fileName || g.title || "読み込み済み" }),
+    h("dl", {}, [
+      ...row("寸法", g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）"),
+      ...row("ブロック", countBlocks(g).toLocaleString() + " 個"),
+      ...row("種類", mats.items.length + " 種類"),
+    ]),
+  ]));
+}
+
 /** 形状ごとに見やすい立面図の見せ方が違うので、切り替え時に既定へ戻す */
 function syncElevMode() {
   elevMode = SHAPES[state.shape].elev || "section";
@@ -1128,27 +2088,37 @@ function syncElevMode() {
   if (sel) sel.value = elevMode;
 }
 
+/** 数値の入力欄をまとめて作る。int は整数、num は小数を許す */
+function numberGrid(keys, onChange) {
+  const grid = h("div", { class: "grid2" });
+  for (const key of keys) {
+    const f = FIELDS[key];
+    const input = h("input", {
+      type: "number", min: f.min, max: f.max, step: f.step || 1, value: state[key], id: "f-" + key,
+      oninput: (e) => {
+        if (f.type === "num") {
+          const v = Number(e.target.value);
+          state[key] = isFinite(v) ? Math.max(f.min, Math.min(f.max, v)) : f.min;
+        } else {
+          state[key] = clampInt(e.target.value, f.min, f.max);
+        }
+        (onChange || renderOutputs)();
+      },
+    });
+    grid.appendChild(h("div", { class: "field" }, [h("label", { for: "f-" + key, text: f.label }), input]));
+  }
+  return grid;
+}
+
 function renderParams() {
   const wrap = $("#params");
   wrap.textContent = "";
   const def = SHAPES[state.shape];
   const shown = def.fields.filter((k) => !FIELDS[k].showIf || FIELDS[k].showIf(state));
-  const nums = shown.filter((k) => FIELDS[k].type === "int");
+  const nums = shown.filter((k) => FIELDS[k].type === "int" || FIELDS[k].type === "num");
   const bools = shown.filter((k) => FIELDS[k].type === "bool");
 
-  const grid = h("div", { class: "grid2" });
-  for (const key of nums) {
-    const f = FIELDS[key];
-    const input = h("input", {
-      type: "number", min: f.min, max: f.max, value: state[key], id: "f-" + key,
-      oninput: (e) => {
-        state[key] = clampInt(e.target.value, f.min, f.max);
-        renderOutputs();
-      },
-    });
-    grid.appendChild(h("div", { class: "field" }, [h("label", { for: "f-" + key, text: f.label }), input]));
-  }
-  wrap.appendChild(grid);
+  wrap.appendChild(numberGrid(nums));
 
   for (const key of bools) {
     const f = FIELDS[key];
@@ -1194,7 +2164,7 @@ function renderWarnings(warns) {
 }
 
 /* ------------------------------------------------------------------
-   10. 図面の描画
+   11. 図面の描画
    ------------------------------------------------------------------ */
 
 function kindColor(kind) {
@@ -1205,6 +2175,114 @@ function kindColor(kind) {
     case K.PILLAR: return cssVar("--cell-pillar");
     default: return cssVar("--cell");
   }
+}
+
+/* ---------- ブロックの色 ----------
+   読み込んだ建築は種類が多いので、テーマの色ではなく素材そのものの色で塗る。
+   地図と同じ考え方で、明暗どちらのテーマでも同じ色になる。
+   表に無い ID は、系統ごとのルール → ID のハッシュ、の順で色を決める。 */
+
+const COLOR_WORDS = {
+  white: "#e9ecec", orange: "#f07613", magenta: "#bd44b3", light_blue: "#3aafd9",
+  yellow: "#f8c627", lime: "#70b919", pink: "#ed8dac", gray: "#3e4447",
+  light_gray: "#8e8e86", cyan: "#158991", purple: "#792aac", blue: "#35399d",
+  brown: "#724728", green: "#546d1b", red: "#a12722", black: "#141519",
+};
+
+const WOOD_COLORS = {
+  oak: "#b8945f", spruce: "#785836", birch: "#d7cb8d", jungle: "#a3714a",
+  acacia: "#ba6337", dark_oak: "#4f3218", mangrove: "#773934", cherry: "#e3a8b0",
+  pale_oak: "#e4dcd4", bamboo: "#c3b23c", crimson: "#7b3a55", warped: "#3a8e8c",
+};
+
+const BLOCK_COLORS = {
+  stone: "#7f7f7f", cobblestone: "#7a7a7a", mossy_cobblestone: "#6a7a5f",
+  stone_bricks: "#7a7a7a", mossy_stone_bricks: "#6f7a68", cracked_stone_bricks: "#767470",
+  smooth_stone: "#9c9c9c", andesite: "#8a8a86", diorite: "#c9c9c6", granite: "#9d6b53",
+  deepslate: "#4c4c50", cobbled_deepslate: "#4e4e52", deepslate_bricks: "#474749",
+  tuff: "#6c6f60", calcite: "#dfdedb", dripstone_block: "#8a6a5a", basalt: "#4f4f57",
+  blackstone: "#2b2426", netherrack: "#6e3634", nether_bricks: "#2e171c",
+  end_stone: "#dbdd9f", end_stone_bricks: "#d9dba1", purpur_block: "#a97fa9",
+  obsidian: "#120f1c", crying_obsidian: "#1f0f3b", bedrock: "#565656",
+  dirt: "#87613f", coarse_dirt: "#7b5a3a", rooted_dirt: "#916b4e",
+  grass_block: "#7bb33a", podzol: "#5b3d1f", mycelium: "#6f6265",
+  sand: "#dbd3a0", red_sand: "#b0561e", sandstone: "#d9d2a5", red_sandstone: "#b0561e",
+  gravel: "#84807f", clay: "#a0a7b4", terracotta: "#985e43",
+  snow_block: "#f0fafa", ice: "#7ea9f7", packed_ice: "#7ba4f7", blue_ice: "#74a7fa",
+  glass: "#adcfe0", glass_pane: "#adcfe0", tinted_glass: "#3a3540",
+  water: "#3a63c8", lava: "#e8721a", soul_sand: "#513b2e", soul_soil: "#4c382b",
+  magma_block: "#8e3c1d", sponge: "#c5c552", wet_sponge: "#a5ab4e",
+  bricks: "#985542", prismarine: "#5f9187", sea_lantern: "#b7cfc6", glowstone: "#f2c86e",
+  shroomlight: "#e5804a", froglight: "#f2eeb1", amethyst_block: "#8567c4",
+  iron_block: "#d8d8d8", gold_block: "#f9ec4e", diamond_block: "#5decdc",
+  emerald_block: "#2fd063", netherite_block: "#443c3d", copper_block: "#c06c50",
+  coal_block: "#131313", redstone_block: "#c62b1a", lapis_block: "#1c50a4",
+  quartz_block: "#eae5dd", smooth_quartz: "#eae5dd", quartz_pillar: "#e9e4dc",
+  bookshelf: "#8b6c43", crafting_table: "#8b6c43", chest: "#a3762f", trapped_chest: "#a3762f",
+  barrel: "#88632f", furnace: "#6d6d6d", blast_furnace: "#5b5b5b", smoker: "#5f5548",
+  hopper: "#4a4a4e", dropper: "#6d6d6d", dispenser: "#6d6d6d", observer: "#5a5a5e",
+  piston: "#9c7f4e", sticky_piston: "#7e9c4e", piston_head: "#9c7f4e",
+  redstone_wire: "#c62b1a", redstone_torch: "#e04a3a", redstone_lamp: "#9a6a3c",
+  repeater: "#b6b0aa", comparator: "#b6b0aa", target: "#ded3c8", lever: "#8b6c43",
+  note_block: "#6b4b2c", tnt: "#c8402c", slime_block: "#77c25a", honey_block: "#f9a824",
+  rail: "#9a8b6e", powered_rail: "#c6902b", detector_rail: "#a08a6a", activator_rail: "#8a6a52",
+  torch: "#f2c86e", lantern: "#f0b05a", soul_lantern: "#4fd1c0", campfire: "#c8752c",
+  ladder: "#8b6c43", scaffolding: "#c8a86a", string: "#d5d5d5", tripwire: "#d5d5d5",
+  cobweb: "#e4e9ea", vine: "#4e7a2b", moss_block: "#5b7a34", sculk: "#0f2b31",
+  hay_block: "#c8a01c", composter: "#795a35", cauldron: "#4a4a4e", anvil: "#484848",
+  beacon: "#7ce4dc", conduit: "#a08d6f", spawner: "#213850", end_portal_frame: "#3a6b5e",
+  farmland: "#5f3f22", dirt_path: "#9a7c46", wheat: "#c8bb4a", sugar_cane: "#8bc45a",
+  bamboo: "#5f9b2a", kelp: "#2f6b2a", lily_pad: "#3f7a2a", nether_wart: "#7a1d1d",
+  air: "#00000000", cave_air: "#00000000", void_air: "#00000000",
+};
+
+/** 表に無い ID を、系統ごとのルールで拾う */
+function ruleColor(name) {
+  for (const [word, col] of Object.entries(COLOR_WORDS)) {
+    // light_gray を gray より先に見たいので、長い語から順に当てる必要がある
+    if (name.startsWith(word + "_")) {
+      if (/_(wool|concrete|concrete_powder|terracotta|glass|glass_pane|carpet|bed|banner|shulker_box|candle|glazed_terracotta)$/.test(name)) return col;
+    }
+  }
+  for (const [wood, col] of Object.entries(WOOD_COLORS)) {
+    if (name.startsWith(wood + "_") || name === wood + "_wood") return col;
+  }
+  if (/(^|_)(planks|log|wood|fence|door|trapdoor|sign|button|pressure_plate)$/.test(name)) return "#b8945f";
+  if (name.includes("deepslate")) return "#4c4c50";
+  if (name.includes("copper")) return "#c06c50";
+  if (name.includes("quartz")) return "#eae5dd";
+  if (name.includes("prismarine")) return "#5f9187";
+  if (name.includes("purpur")) return "#a97fa9";
+  if (name.includes("nether_brick")) return "#2e171c";
+  if (name.includes("sandstone")) return "#d9d2a5";
+  if (name.includes("stone") || name.includes("cobble")) return "#7f7f7f";
+  if (name.includes("glass")) return "#adcfe0";
+  if (name.includes("redstone")) return "#c62b1a";
+  if (name.includes("water")) return "#3a63c8";
+  if (name.includes("lava")) return "#e8721a";
+  if (name.includes("leaves")) return "#4a7a2a";
+  if (name.includes("ice")) return "#7ea9f7";
+  if (name.includes("wool") || name.includes("concrete")) return "#c9c9c6";
+  return null;
+}
+
+/** 最後の手段。ID から色相を決めて、彩度と明度は固定する（必ず見分けがつく） */
+function hashColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return "hsl(" + (h % 360) + " 42% 58%)";
+}
+
+const colorCache = new Map();
+
+function blockColor(entry, g) {
+  if (!entry || entry.kind === K.EMPTY) return "#00000000";
+  if (g && g.source === "shape") return kindColor(entry.kind);
+  const name = blockShort(entry);
+  if (colorCache.has(name)) return colorCache.get(name);
+  const col = BLOCK_COLORS[name] || ruleColor(name) || hashColor(name);
+  colorCache.set(name, col);
+  return col;
 }
 
 /** 平面図。cell はセルの一辺（px）、gutter は座標目盛りの帯 */
@@ -1237,12 +2315,12 @@ function drawPlan(canvas, g, y, opts) {
   // セル本体
   for (let z = 0; z < g.sz; z++) {
     for (let x = 0; x < g.sx; x++) {
-      const kind = gGet(g, x, y, z);
-      if (!kind) continue;
-      ctx.fillStyle = kindColor(kind);
+      const e = gBlock(g, x, y, z);
+      if (e.kind === K.EMPTY) continue;
+      ctx.fillStyle = blockColor(e, g);
       ctx.fillRect(gutter + x * cell, gutter + z * cell, cell, cell);
-      const dir = gDir(g, x, y, z);
-      if (kind === K.STAIR && dir && cell >= 10) drawArrow(ctx, gutter + x * cell, gutter + z * cell, cell, dir);
+      if (e.dir && cell >= 10) drawArrow(ctx, gutter + x * cell, gutter + z * cell, cell, e.dir);
+      else if (e.vert && cell >= 10) drawVert(ctx, gutter + x * cell, gutter + z * cell, cell, e.vert);
     }
   }
 
@@ -1276,6 +2354,21 @@ function drawArrow(ctx, px, py, cell, dir) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+/** facing=up / down は矢印で描けないので、丸で表す（● 下向き / ○ 上向き） */
+function drawVert(ctx, px, py, cell, vert) {
+  const r = cell * 0.22;
+  ctx.beginPath();
+  ctx.arc(px + cell / 2, py + cell / 2, r, 0, Math.PI * 2);
+  if (vert === "down") {
+    ctx.fillStyle = cssVar("--panel");
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = cssVar("--panel");
+    ctx.lineWidth = Math.max(1, cell * 0.09);
+    ctx.stroke();
+  }
 }
 
 function drawRulers(ctx, g, cell, gutter) {
@@ -1321,17 +2414,18 @@ function drawElevation(canvas, g, mode) {
   for (let y = 0; y < g.sy; y++) {
     const py = (g.sy - 1 - y) * cell;
     for (let x = 0; x < g.sx; x++) {
-      let kind = K.EMPTY;
+      let e = AIR;
       if (mode === "section") {
-        kind = gGet(g, x, y, zc);
+        e = gBlock(g, x, y, zc);
       } else {
+        // 投影は、手前から見て最初に当たったブロックの色を使う
         for (let z = 0; z < g.sz; z++) {
-          const k = gGet(g, x, y, z);
-          if (k) { kind = (kind && kind !== k) ? K.BLOCK : k; if (k === K.EDGE) break; }
+          const cand = gBlock(g, x, y, z);
+          if (cand.kind !== K.EMPTY) { e = cand; if (cand.kind === K.EDGE) break; }
         }
       }
-      if (!kind) continue;
-      ctx.fillStyle = kindColor(kind);
+      if (e.kind === K.EMPTY) continue;
+      ctx.fillStyle = blockColor(e, g);
       ctx.fillRect(gutter + x * cell, py, cell, cell);
     }
   }
@@ -1362,16 +2456,80 @@ function drawElevation(canvas, g, mode) {
 function renderLegend(g) {
   const wrap = $("#legend");
   wrap.textContent = "";
+
+  const add = (color, text) => wrap.appendChild(h("span", {}, [
+    h("span", { class: "sw-box", style: "background:" + color }),
+    h("span", { text }),
+  ]));
+
+  if (g.source !== "shape") {
+    // 読み込んだ建築は種類が多いので、多い順に上位だけ出す
+    const mats = buildMaterials(g);
+    for (const it of mats.items.slice(0, 12)) add(blockColor(it.entry, g), it.name + " ×" + it.count);
+    if (mats.items.length > 12) {
+      wrap.appendChild(h("span", { text: "ほか " + (mats.items.length - 12) + " 種類（材料タブに全部あります）" }));
+    }
+    if (countKind(g, K.STAIR) || mats.items.some((i) => i.entry.dir)) {
+      wrap.appendChild(h("span", { text: "▶ 矢印 = facing（向き）／● 下向き／○ 上向き" }));
+    }
+    add(cssVar("--ghost"), "一つ下の段");
+    return;
+  }
+
   const items = [{ c: "--cell", t: "ブロック" }];
   if (countKind(g, K.EDGE)) items.push({ c: "--cell-edge", t: "輪郭（外側に面しているブロック）" });
   if (countKind(g, K.STAIR)) items.push({ c: "--cell-stair", t: "階段ブロック（矢印＝上り方向＝facing）" });
   if (countKind(g, K.CORNER)) items.push({ c: "--cell-corner", t: "隅棟（コーナー）" });
   if (countKind(g, K.PILLAR)) items.push({ c: "--cell-pillar", t: "柱" });
   items.push({ c: "--ghost", t: "一つ下の段" });
-  for (const it of items) {
-    wrap.appendChild(h("span", {}, [
-      h("span", { class: "sw-box", style: "background:" + cssVar(it.c) }),
-      h("span", { text: it.t }),
+  for (const it of items) add(cssVar(it.c), it.t);
+}
+
+function renderMaterials(g) {
+  const wrap = $("#mats-out");
+  wrap.textContent = "";
+  const mats = buildMaterials(g);
+
+  if (!mats.items.length) {
+    wrap.appendChild(h("p", { class: "mats-head", text: "ブロックがありません。" }));
+    return;
+  }
+
+  wrap.appendChild(h("p", {
+    class: "mats-head",
+    text: "合計 " + mats.total.toLocaleString() + " 個 / " + mats.items.length + " 種類  —  多い順",
+  }));
+
+  const rows = mats.items.map((it) => h("tr", {}, [
+    h("td", { class: "sw-cell" }, [h("span", { class: "chip-color", style: "background:" + blockColor(it.entry, g) })]),
+    h("td", {}, [
+      h("span", { class: "mono", text: it.name }),
+      it.states.length ? h("span", { class: "hint", style: "margin:0 0 0 8px; display:inline", text: it.states.join(" / ") }) : null,
+    ]),
+    h("td", { class: "num", text: it.count.toLocaleString() }),
+    h("td", { class: "num", text: stackLabel(it.count) }),
+  ]));
+
+  wrap.appendChild(h("table", { class: "mats" }, [
+    h("thead", {}, [h("tr", {}, [
+      h("th", { text: "" }), h("th", { text: "ブロック" }),
+      h("th", { class: "num", text: "個数" }), h("th", { class: "num", text: "スタック" }),
+    ])]),
+    h("tbody", {}, rows),
+  ]));
+
+  if (!$("#mats-per-layer").checked) return;
+
+  for (let y = 0; y < g.sy; y++) {
+    const list = layerMaterials(g, mats, y);
+    if (!list.length) continue;
+    wrap.appendChild(h("div", { class: "mats-layer" }, [
+      h("h4", { text: (y + 1) + " 段目 — " + countLayer(g, y).toLocaleString() + " 個" }),
+      h("table", { class: "mats" }, [h("tbody", {}, list.map((r) => h("tr", {}, [
+        h("td", { class: "sw-cell" }, [h("span", { class: "chip-color", style: "background:" + blockColor(r.entry, g) })]),
+        h("td", {}, [h("span", { class: "mono", text: r.name })]),
+        h("td", { class: "num", text: r.count.toLocaleString() }),
+      ])))]),
     ]));
   }
 }
@@ -1400,7 +2558,7 @@ function renderSheet(g) {
 }
 
 /* ------------------------------------------------------------------
-   11. 全体の描き直し
+   12. 全体の描き直し
    ------------------------------------------------------------------ */
 
 let currentGrid = null;
@@ -1408,6 +2566,14 @@ let currentGrid = null;
 function renderOutputs() {
   const g = build(state);
   currentGrid = g;
+
+  // 読み込みモードでまだファイルが無いときは、図面ではなく案内を出す
+  const nothing = state.mode === "import" && !loadedGrid;
+  $("#empty-hint").hidden = !nothing;
+  for (const el of document.querySelectorAll("#tab-plan .planbar, #tab-plan .canvaswrap, #tab-plan .sec-head, #tab-plan .legend, #tab-plan .readout, #tab-plan .stats")) {
+    el.hidden = nothing;
+  }
+  if (nothing) { save(); return; }
   if (layerIndex >= g.sy) layerIndex = g.sy - 1;
   if (layerIndex < 0) layerIndex = 0;
 
@@ -1429,6 +2595,7 @@ function renderOutputs() {
     (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "");
 
   if (activeTab === "sheet") renderSheet(g);
+  if (activeTab === "mats") renderMaterials(g);
   if (activeTab === "text") $("#text-out").textContent = buildText(state, g);
   if (activeTab === "cmd") $("#cmd-out").textContent = buildCommands(state, g);
 
@@ -1436,14 +2603,17 @@ function renderOutputs() {
 }
 
 function renderAll() {
+  renderMode();
   renderShapes();
   renderParams();
   renderBlocks();
+  renderBuilding();
+  renderImportInfo();
   renderOutputs();
 }
 
 /* ------------------------------------------------------------------
-   12. 保存・復元・URL
+   13. 保存・復元・URL
    ------------------------------------------------------------------ */
 
 function save() {
@@ -1490,7 +2660,7 @@ function shareUrl() {
 }
 
 /* ------------------------------------------------------------------
-   13. イベント
+   14. イベント
    ------------------------------------------------------------------ */
 
 function setTab(name) {
@@ -1502,6 +2672,25 @@ function setTab(name) {
     p.classList.toggle("active", p.id === "tab-" + name);
   }
   renderOutputs();
+}
+
+async function loadSchematic(file) {
+  importError = "";
+  state.mode = "import";
+  toast("読み込んでいます…");
+  try {
+    const g = await readSchematic(file);
+    loadedGrid = g;
+    layerIndex = 0;
+    elevMode = "project";           // 読み込んだ建築は投影のほうが形が分かる
+    const sel = $("#elev-mode");
+    if (sel) sel.value = elevMode;
+    toast(file.name + " を読み込みました");
+  } catch (e) {
+    loadedGrid = null;
+    importError = file.name + " を読めませんでした: " + (e && e.message ? e.message : String(e));
+  }
+  renderAll();
 }
 
 function moveLayer(delta) {
@@ -1534,15 +2723,61 @@ function initEvents() {
     const x = Math.floor((e.clientX - rect.left - gutter) / cell);
     const z = Math.floor((e.clientY - rect.top - gutter) / cell);
     if (x < 0 || z < 0 || x >= g.sx || z >= g.sz) { $("#readout").textContent = ""; return; }
-    const kind = gGet(g, x, layerIndex, z);
-    const dir = gDir(g, x, layerIndex, z);
-    const label = { 0: "空", 1: "ブロック", 2: "ブロック（輪郭）", 3: "階段", 4: "隅棟", 5: "柱" }[kind];
-    $("#readout").textContent =
-      "x=" + (x + g.labelX0) + "  z=" + (z + g.labelZ0) + "  " + (layerIndex + 1) + " 段目  —  " +
-      label + (kind === K.STAIR && DIR_NAME[dir] ? "（facing=" + DIR_NAME[dir] + "）" : "");
+    const blk = gBlock(g, x, layerIndex, z);
+    const where = "x=" + (x + g.labelX0) + "  z=" + (z + g.labelZ0) + "  " + (layerIndex + 1) + " 段目  —  ";
+    if (blk.kind === K.EMPTY) { $("#readout").textContent = where + "空"; return; }
+    if (g.source === "shape") {
+      const label = { 1: "ブロック", 2: "ブロック（輪郭）", 3: "階段", 4: "隅棟", 5: "柱" }[blk.kind] || "ブロック";
+      $("#readout").textContent = where + label +
+        (blk.kind === K.STAIR && DIR_NAME[blk.dir] ? "（facing=" + DIR_NAME[blk.dir] + "）" : "");
+    } else {
+      $("#readout").textContent = where + blockName(blk);
+    }
   });
   $("#plan").addEventListener("mouseleave", () => { $("#readout").textContent = ""; });
 
+  for (const b of document.querySelectorAll("#modes button")) {
+    b.addEventListener("click", () => {
+      state.mode = b.dataset.mode;
+      layerIndex = 0;
+      renderAll();
+    });
+  }
+
+  const drop = $("#drop");
+  const picker = $("#file-schem");
+  drop.addEventListener("click", () => picker.click());
+  drop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { picker.click(); e.preventDefault(); }
+  });
+  picker.addEventListener("change", () => {
+    if (picker.files && picker.files[0]) loadSchematic(picker.files[0]);
+    picker.value = "";
+  });
+  for (const ev of ["dragenter", "dragover"]) {
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });
+  }
+  for (const ev of ["dragleave", "drop"]) {
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); });
+  }
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadSchematic(f);
+  });
+  // ページのどこに落としても読み込めるようにする（ブラウザ既定の「開く」は止める）
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    e.preventDefault();
+    state.mode = "import";
+    loadSchematic(f);
+  });
+
+  $("#mats-per-layer").addEventListener("change", renderOutputs);
+  $("#btn-copy-mats").addEventListener("click", () => {
+    copyText(buildMaterialsText(state, build(state), $("#mats-per-layer").checked), "材料表");
+  });
   $("#btn-copy-text").addEventListener("click", () => copyText(buildText(state, build(state)), "テキスト図面"));
   $("#btn-copy-cmd").addEventListener("click", () => copyText(buildCommands(state, build(state)), "コマンド"));
   $("#btn-dl-text").addEventListener("click", () => {
@@ -1578,7 +2813,7 @@ function initEvents() {
 }
 
 /* ------------------------------------------------------------------
-   14. セルフテスト（?selftest=1）
+   15. セルフテスト（?selftest=1）
 
    幾何の不変条件だけを見る。ここが 0 failed でないと CI がデプロイしない。
    ------------------------------------------------------------------ */
@@ -1868,6 +3103,270 @@ function runSelfTest() {
     return good;
   })());
 
+  // --- 11. 材料表 ---
+  const matSt = st({ shape: "gable", width: 11, depth: 5, run: 1, stairs: true, gableEnds: true,
+                     block: "minecraft:stone_bricks", stairBlock: "minecraft:oak_stairs" });
+  const matG = buildGable(matSt);
+  const mats = buildMaterials(matG);
+  ok("材料の合計がグリッドの総ブロック数と一致", mats.total === countBlocks(matG),
+    mats.total + " vs " + countBlocks(matG));
+  ok("facing 違いは 1 行にまとまる", (() => {
+    const stairs = mats.items.filter((i) => i.id === "minecraft:oak_stairs");
+    return stairs.length === 1 && stairs[0].states.length === 2 &&
+      stairs[0].count === countKind(matG, K.STAIR);
+  })());
+  ok("入力したブロック ID がそのまま材料になる",
+    mats.items.some((i) => i.id === "minecraft:stone_bricks"));
+  ok("材料は多い順に並ぶ", mats.items.every((it, i) => i === 0 || mats.items[i - 1].count >= it.count));
+  ok("スタック換算が正しい",
+    stackLabel(63) === "63 個" && stackLabel(64) === "1 スタック" && stackLabel(130) === "2 スタック + 2 個");
+  ok("段ごとの内訳の合計が、その段のブロック数と一致", (() => {
+    for (let y = 0; y < matG.sy; y++) {
+      const sum = layerMaterials(matG, mats, y).reduce((n, r) => n + r.count, 0);
+      if (sum !== countLayer(matG, y)) return false;
+    }
+    return true;
+  })());
+  ok("材料表のテキストに合計・スタック・段ごとの内訳が入る", (() => {
+    // 64 個を超える材料が出る大きさにして、スタック表記まで確かめる
+    const bigSt = st({ shape: "gable", width: 31, depth: 21, run: 1, stairs: true, gableEnds: true });
+    const bigG = buildGable(bigSt);
+    const t = buildMaterialsText(bigSt, bigG, true);
+    return /合計 \d+ 個/.test(t) && /スタック/.test(t) && /## 1 段目/.test(t) &&
+      buildMaterials(bigG).items.some((i) => i.count >= 64);
+  })());
+  ok("空のグリッドでも材料表が壊れない", (() => {
+    const empty = makeGrid(2, 2, 2, defaultState());
+    const m = buildMaterials(empty);
+    return m.total === 0 && m.items.length === 0;
+  })());
+
+  // --- 12. パレット ---
+  ok("空気はかならず添字 0", matG.palette[0].kind === K.EMPTY && gIdx(matG, 0, 0, 0) >= 0);
+  ok("向きの違う階段は別のパレット項目", (() => {
+    const ids = matG.palette.filter((e) => e.kind === K.STAIR).map((e) => propsKey(e.props));
+    return ids.includes("facing=east") && ids.includes("facing=west");
+  })());
+  ok("輪郭と内側は同じブロックだが別項目", (() => {
+    const c = buildCylinder(st({ shape: "cylinder", rx: 5, rz: 5, height: 1, hollow: false }));
+    const kinds = new Set(c.palette.slice(1).map((e) => e.kind));
+    const ids = new Set(c.palette.slice(1).map((e) => e.id));
+    return kinds.has(K.BLOCK) && kinds.has(K.EDGE) && ids.size === 1;
+  })());
+  ok("パレットは同じ内容を使い回す", (() => {
+    const g2 = makeGrid(4, 1, 4, defaultState());
+    for (let x = 0; x < 4; x++) gSet(g2, x, 0, 0, K.BLOCK, DIR.NONE);
+    return g2.palette.length === 2;
+  })());
+
+
+  // --- 13. スケマティック読み込み ---
+  // 3×3×3 の最小フィクスチャ。床の石 9 個・中央にホッパー（北向き）・角に階段（東向き）。
+  // 4 形式とも同じ図面になることを見る。gzip でないファイルはそのまま読める。
+  const FIX = {
+    nbt: "CgAACQAEc2l6ZQMAAAADAAAAAwAAAAMAAAADCQAHcGFsZXR0ZQoAAAAECAAETmFtZQANbWluZWNyYWZ0OmFpcgAIAAROYW1lAA9taW5lY3JhZnQ6c3RvbmUACAAETmFtZQAQbWluZWNyYWZ0OmhvcHBlcgoAClByb3BlcnRpZXMIAAZmYWNpbmcABW5vcnRoAAAIAAROYW1lABRtaW5lY3JhZnQ6b2FrX3N0YWlycwoAClByb3BlcnRpZXMIAAZmYWNpbmcABGVhc3QAAAkABmJsb2NrcwoAAAALAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAAAAAAAAAAAAAAAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAABAAAAAAAAAAAAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAACAAAAAAAAAAAAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAAAAAAAAAAAAAEAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAABAAAAAAAAAAEAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAACAAAAAAAAAAEAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAAAAAAAAAAAAAIAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAABAAAAAAAAAAIAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAACAAAAAAAAAAIAAwAFc3RhdGUAAAACCQADcG9zAwAAAAMAAAABAAAAAQAAAAEAAwAFc3RhdGUAAAADCQADcG9zAwAAAAMAAAACAAAAAgAAAAAAAA==",
+    v2: "CgAAAwAHVmVyc2lvbgAAAAICAAVXaWR0aAADAgAGSGVpZ2h0AAMCAAZMZW5ndGgAAwoAB1BhbGV0dGUDAA1taW5lY3JhZnQ6YWlyAAAAAAMAD21pbmVjcmFmdDpzdG9uZQAAAAEDAB5taW5lY3JhZnQ6aG9wcGVyW2ZhY2luZz1ub3J0aF0AAAACAwAhbWluZWNyYWZ0Om9ha19zdGFpcnNbZmFjaW5nPWVhc3RdAAAAAwAHAAlCbG9ja0RhdGEAAAAbAQEBAQEBAQEBAAAAAAIAAAAAAAADAAAAAAAAAA==",
+    v3: "CgAACgAJU2NoZW1hdGljAwAHVmVyc2lvbgAAAAMCAAVXaWR0aAADAgAGSGVpZ2h0AAMCAAZMZW5ndGgAAwoABkJsb2NrcwoAB1BhbGV0dGUDAA1taW5lY3JhZnQ6YWlyAAAAAAMAD21pbmVjcmFmdDpzdG9uZQAAAAEDAB5taW5lY3JhZnQ6aG9wcGVyW2ZhY2luZz1ub3J0aF0AAAACAwAhbWluZWNyYWZ0Om9ha19zdGFpcnNbZmFjaW5nPWVhc3RdAAAAAwAHAAREYXRhAAAAGwEBAQEBAQEBAQAAAAACAAAAAAAAAwAAAAAAAAAAAA==",
+    lit: "CgAAAwAHVmVyc2lvbgAAAAYKAAhNZXRhZGF0YQgABE5hbWUAD+ODhuOCueODiOWwj+WxiwoADUVuY2xvc2luZ1NpemUDAAF4AAAAAwMAAXkAAAADAwABegAAAAMAAAoAB1JlZ2lvbnMKAARtYWluCgAIUG9zaXRpb24DAAF4AAAAAAMAAXkAAAAAAwABegAAAAAACgAEU2l6ZQMAAXgAAAADAwABeQAAAAMDAAF6AAAAAwAJABFCbG9ja1N0YXRlUGFsZXR0ZQoAAAAECAAETmFtZQANbWluZWNyYWZ0OmFpcgAIAAROYW1lAA9taW5lY3JhZnQ6c3RvbmUACAAETmFtZQAQbWluZWNyYWZ0OmhvcHBlcgoAClByb3BlcnRpZXMIAAZmYWNpbmcABW5vcnRoAAAIAAROYW1lABRtaW5lY3JhZnQ6b2FrX3N0YWlycwoAClByb3BlcnRpZXMIAAZmYWNpbmcABGVhc3QAAAwAC0Jsb2NrU3RhdGVzAAAAAQAAAwAIAVVVAAAA",
+    gz: "H4sIAOyjkWoC/42P3QqDMAyF01qdOsZ2safZQ4y9wegkzuJPpcnVnn4VpsWJ0EAhTc7Jl5QABSgyH0wAYPUKOIy6Q2Ys/VfloO66Rzj1ZsDK6Zpv2jiYy+dQJrYDLo1LaDR2HNGVUD6c9QkbpByyWldmeEM6WMcNLL5r8FndPok9jXa8CjXxdEn26mzV0rTwMYHUmxh9LgpIRkvzaSH2NSJCIyM0c4gIlohgiQiWjGDJCNZKI7dzxP8+yXbOb9YXfV6X42gCAAA=",
+  };
+  const fixBytes = (b64) => {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  };
+  const fixGrid = (key) => detectAndParse(parseNBT(fixBytes(FIX[key])));
+  const fixExpect = { "minecraft:stone": 9, "minecraft:hopper": 1, "minecraft:oak_stairs": 1 };
+
+  for (const [key, label] of [["nbt", ".nbt"], ["v2", ".schem v2"], ["v3", ".schem v3"], ["lit", ".litematic"]]) {
+    let g = null, err = "";
+    try { g = fixGrid(key); } catch (e) { err = e.message; }
+    ok(label + " が読める", g, err);
+    if (!g) continue;
+    ok(label + " の寸法が 3×3×3", g.sx === 3 && g.sy === 3 && g.sz === 3, g.sx + "×" + g.sy + "×" + g.sz);
+    ok(label + " の材料が一致", (() => {
+      const m = Object.fromEntries(buildMaterials(g).items.map((i) => [i.id, i.count]));
+      return JSON.stringify(m) === JSON.stringify(fixExpect);
+    })(), JSON.stringify(Object.fromEntries(buildMaterials(g).items.map((i) => [i.id, i.count]))));
+    ok(label + " のブロック状態と向きが残る", (() => {
+      const hop = gBlock(g, 1, 1, 1), stair = gBlock(g, 2, 2, 0);
+      return hop.id === "minecraft:hopper" && hop.props.facing === "north" && hop.dir === DIR.NORTH &&
+        stair.id === "minecraft:oak_stairs" && stair.dir === DIR.EAST && stair.kind === K.STAIR;
+    })());
+    ok(label + " は空気を添字 0 に潰す", gIdx(g, 0, 2, 0) === 0 && gBlock(g, 0, 2, 0).kind === K.EMPTY);
+  }
+
+  ok("4 形式が完全に同じ図面になる", (() => {
+    const gs = ["nbt", "v2", "v3", "lit"].map(fixGrid);
+    for (let y = 0; y < 3; y++) {
+      for (let z = 0; z < 3; z++) {
+        for (let x = 0; x < 3; x++) {
+          const want = blockName(gBlock(gs[0], x, y, z));
+          for (const g of gs) if (blockName(gBlock(g, x, y, z)) !== want) return false;
+        }
+      }
+    }
+    return true;
+  })());
+  ok(".litematic は Metadata の名前をタイトルにする", fixGrid("lit").title === "テスト小屋");
+  ok("読み込んだグリッドは source が import", fixGrid("nbt").source === "import");
+  ok("gzip かどうかを見分ける", isGzip(fixBytes(FIX.gz)) && !isGzip(fixBytes(FIX.nbt)));
+  ok("知らない形式はエラーになる", (() => {
+    try { detectAndParse({ hello: 1 }); return false; } catch (e) { return /知らない形式/.test(e.message); }
+  })());
+  ok("壊れた NBT はエラーになる", (() => {
+    try { parseNBT(new Uint8Array([10, 0, 1])); return false; } catch (e) { return true; }
+  })());
+
+  // --- 14. ビットパックの解除 ---
+  // long の境界をまたぐ位置が正しく読めるか。同じ詰め方を BigInt で作って突き合わせる
+  ok("ビット幅 2 / 3 / 5 で境界をまたいでも読める", (() => {
+    for (const bits of [2, 3, 5]) {
+      const n = 200;
+      const values = [];
+      for (let i = 0; i < n; i++) values.push(i % (1 << bits));
+      const tmp = new BigUint64Array(Math.ceil((n * bits) / 64));
+      for (let i = 0; i < n; i++) {
+        const start = i * bits, a = start >>> 6, off = BigInt(start & 63);
+        const b = ((i + 1) * bits - 1) >>> 6;
+        tmp[a] |= BigInt.asUintN(64, BigInt(values[i]) << off);
+        if (a !== b) tmp[b] |= BigInt(values[i]) >> (64n - off);
+      }
+      const longs = new BigInt64Array(tmp.length);
+      for (let i = 0; i < tmp.length; i++) longs[i] = BigInt.asIntN(64, tmp[i]);
+      const read = litematicaReader(longs, bits);
+      for (let i = 0; i < n; i++) if (read(i) !== values[i]) return false;
+    }
+    return true;
+  })());
+
+  // --- 15. ブロック状態の文字列 ---
+  ok("ブロック状態の文字列を割れる", (() => {
+    const a = parseBlockState("minecraft:oak_stairs[facing=east,half=bottom]");
+    const b = parseBlockState("stone");
+    return a.id === "minecraft:oak_stairs" && a.props.facing === "east" && a.props.half === "bottom" &&
+      b.id === "minecraft:stone" && Object.keys(b.props).length === 0;
+  })());
+  ok("ブロック状態を文字列に戻せる",
+    blockName({ id: "minecraft:hopper", props: { facing: "north" } }) === "minecraft:hopper[facing=north]");
+  ok("読み込んだ図面のテキストは記号と凡例が 1 対 1", (() => {
+    const g = fixGrid("nbt");
+    const { legend } = symbolMap(g);
+    if (!legend) return false;
+    const used = new Set();
+    for (const l of legend) { if (used.has(l.ch)) return false; used.add(l.ch); }
+    const txt = buildText(defaultState(), g);
+    return legend.every((l) => txt.includes(l.ch + " = " + blockName(l.entry)));
+  })());
+  ok("読み込んだ図面の setblock はブロック状態付き", (() => {
+    const cmd = buildCommands(defaultState(), fixGrid("nbt"));
+    return /minecraft:hopper\[facing=north\]/.test(cmd) && /minecraft:oak_stairs\[facing=east\]/.test(cmd);
+  })());
+
+
+  // --- 16. 実際の建物 ---
+  const bSt = st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 2, bScale: 1,
+                   bWall: 1, bRoof: "gable", bWinW: 2, bWinH: 2, bWinGap: 2, bWinSill: 1,
+                   bDoorSide: "south", bDoorW: 1, bDoorH: 2 });
+  const bG = buildBuilding(bSt);
+
+  ok("メートルがブロックに換算される", (() => {
+    const d = buildingDims(bSt);
+    return d.w === 9 && d.d === 7 && d.fh === 3 && d.bodyH === 6;
+  })());
+  ok("スケールを変えるとブロック数が変わる", (() => {
+    const half = buildingDims(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bScale: 0.5 }));
+    return half.w === 18 && half.d === 14 && half.fh === 6;
+  })());
+  ok("換算は 1 ブロックを下回らない",
+    buildingDims(st({ mode: "building", bWidth: 0.2, bDepth: 0.2, bScale: 5 })).w === 1);
+
+  ok("建物の平面の大きさが換算どおり", bG.sx === 9 && bG.sz === 7);
+  ok("階数ぶんの床がある", (() => {
+    // 1 階と 2 階の床は全面が埋まっている
+    for (const y of [0, 3]) {
+      for (let z = 0; z < bG.sz; z++) for (let x = 0; x < bG.sx; x++) if (!gGet(bG, x, y, z)) return false;
+    }
+    return true;
+  })());
+  ok("壁が閉じている（外周が途切れない）", (() => {
+    // 玄関のある面と高さを避けて、外周が全部埋まっているか見る
+    for (const y of [4, 5]) {                    // 2 階の壁（玄関は 1 階）
+      for (let x = 0; x < bG.sx; x++) if (!gGet(bG, x, y, 0) || !gGet(bG, x, y, bG.sz - 1)) return false;
+      for (let z = 0; z < bG.sz; z++) if (!gGet(bG, 0, y, z) || !gGet(bG, bG.sx - 1, y, z)) return false;
+    }
+    return true;
+  })());
+  ok("内側は空洞（床と壁だけ）", gGet(bG, 4, 2, 3) === K.EMPTY && gGet(bG, 4, 5, 3) === K.EMPTY);
+  ok("窓は壁を貫通せずガラスで塞がれる", (() => {
+    const ids = new Set();
+    for (let y = 0; y < bG.sy; y++) {
+      for (let x = 0; x < bG.sx; x++) {
+        const e = gBlock(bG, x, y, 0);
+        if (e.kind !== K.EMPTY) ids.add(e.id);
+      }
+    }
+    // 北面にガラスがあり、かつ穴（空気）は玄関側だけなので北面には無い
+    if (!ids.has("minecraft:glass")) return false;
+    for (let y = 1; y < 3; y++) for (let x = 0; x < bG.sx; x++) if (!gGet(bG, x, y, 0)) return false;
+    return true;
+  })());
+  ok("玄関が指定した面に開く", (() => {
+    const x = Math.floor((bG.sx - 1) / 2);
+    return gGet(bG, x, 1, bG.sz - 1) === K.EMPTY && gGet(bG, x, 2, bG.sz - 1) === K.EMPTY &&
+      gGet(bG, x, 3, bG.sz - 1) !== K.EMPTY;
+  })());
+  ok("玄関の向きを変えると開く面が変わる", (() => {
+    const west = buildBuilding(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1,
+                                    bScale: 1, bDoorSide: "west", bDoorW: 1, bDoorH: 2, bWinW: 0 }));
+    const z = Math.floor((west.sz - 1) / 2);
+    return gGet(west, 0, 1, z) === K.EMPTY && gGet(west, west.sx - 1, 1, z) !== K.EMPTY;
+  })());
+  ok("屋根が本体の上に乗る", (() => {
+    const d = buildingDims(bSt);
+    return bG.sy > d.bodyH && countLayer(bG, d.bodyH) > 0 && countKind(bG, K.STAIR) > 0;
+  })());
+  ok("陸屋根は 1 段で平ら", (() => {
+    const flat = buildBuilding(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1,
+                                    bScale: 1, bRoof: "flat" }));
+    const d = buildingDims(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1, bScale: 1 }));
+    return flat.sy === d.bodyH + 1 && countLayer(flat, flat.sy - 1) === flat.sx * flat.sz;
+  })());
+  ok("寄棟屋根も選べる", (() => {
+    const hip = buildBuilding(st({ mode: "building", bWidth: 11, bDepth: 11, bFloorHeight: 3, bFloors: 1,
+                                   bScale: 1, bRoof: "hip" }));
+    return countKind(hip, K.CORNER) > 0;
+  })());
+  ok("建物は複数のブロックを使う", (() => {
+    const ids = new Set(buildMaterials(bG).items.map((i) => i.id));
+    return ids.has("minecraft:oak_planks") && ids.has("minecraft:stone_bricks") && ids.has("minecraft:glass");
+  })());
+  ok("窓の開口は等間隔で、両端に壁が残る", (() => {
+    const runs = windowRuns(11, 2, 2);
+    if (!runs.length) return false;
+    if (runs[0][0] < 1 || runs[runs.length - 1][1] > 9) return false;
+    for (let i = 1; i < runs.length; i++) if (runs[i][0] - runs[i - 1][1] - 1 !== 2) return false;
+    return true;
+  })());
+  ok("窓が入らない幅では開口を作らない", windowRuns(3, 2, 2).length === 0 && windowRuns(9, 0, 2).length === 0);
+  ok("建物の source は building", bG.source === "building");
+  ok("窓が階高に収まらないときは警告が出る", (() => {
+    const tall = st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1, bScale: 1,
+                      bWinW: 2, bWinH: 5, bWinSill: 1 });
+    return computeWarnings(tall, buildBuilding(tall)).some((w) => /窓が階高に収まらない/.test(w.msg));
+  })());
+  ok("収まる窓では警告が出ない", (() => {
+    const fit = st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 5, bFloors: 1, bScale: 1,
+                     bWinW: 2, bWinH: 2, bWinSill: 1 });
+    return !computeWarnings(fit, buildBuilding(fit)).some((w) => /収まらない/.test(w.msg));
+  })());
+  ok("屋根の移し替えでパレットが混ざらない", (() => {
+    // blitGrid が屋根のブロックを、こちらのパレットに正しく登録できているか
+    const ids = new Set(bG.palette.slice(1).map((e) => e.id));
+    return ids.has("minecraft:dark_oak_planks") || ids.has("minecraft:oak_stairs");
+  })());
+
   // --- 結果表示 ---
   const passed = results.filter((r) => r.pass).length;
   const failed = results.length - passed;
@@ -1878,7 +3377,7 @@ function runSelfTest() {
 }
 
 /* ------------------------------------------------------------------
-   15. 起動
+   16. 起動
    ------------------------------------------------------------------ */
 
 function init() {
