@@ -506,33 +506,102 @@ const SHAPES = {
 /* ------------------------------------------------------------------
    4. ボクセルの器
 
-   layers[y] は X-Z 平面のセル種別、dirs[y] は同じ位置の向き。
+   layers[y] は X-Z 平面の「パレット添字」（0 は必ず空気）。
+   どのマスに何のブロックかを持たせるための作りで、パラメトリック生成も
+   スケマティック読み込みも同じ器に載る。
+
+   palette[i] = { id, props, kind, dir }
+     id    … "minecraft:oak_stairs"
+     props … { facing: "east" } のようなブロック状態
+     kind  … 図面上の意味（K.BLOCK / K.EDGE / K.STAIR …）。描画とテキスト出力が使う
+     dir   … 向き（props から導出）。矢印の描画に使う
+
+   向きの違う階段は別のパレット項目になる。スケマティックの持ち方と同じ。
    labelX0 / labelZ0 は「インデックス 0 が表示上どの座標か」。
    ------------------------------------------------------------------ */
 
-function makeGrid(sx, sy, sz) {
-  const layers = [], dirs = [];
-  for (let y = 0; y < sy; y++) {
-    layers.push(new Uint8Array(sx * sz));
-    dirs.push(new Uint8Array(sx * sz));
-  }
-  return { sx, sy, sz, layers, dirs, labelX0: 0, labelZ0: 0 };
+const AIR = { id: "minecraft:air", props: {}, kind: K.EMPTY, dir: DIR.NONE };
+
+/** ブロック状態を "facing=east,half=bottom" の正規形にする（キーは辞書順） */
+function propsKey(props) {
+  const keys = Object.keys(props || {}).sort();
+  return keys.map((k) => k + "=" + props[k]).join(",");
 }
 
-function gGet(g, x, y, z) {
-  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return K.EMPTY;
+/** パレット項目を "id[状態]#種別" で一意にする。種別が違えば別項目（輪郭と内側を区別するため） */
+function entryKey(e) {
+  return e.id + "[" + propsKey(e.props) + "]#" + e.kind;
+}
+
+function makeGrid(sx, sy, sz, st) {
+  const layers = [];
+  for (let y = 0; y < sy; y++) layers.push(new Uint16Array(sx * sz));
+  return {
+    sx, sy, sz, layers,
+    labelX0: 0, labelZ0: 0,
+    source: "shape",                   // "shape" / "import" / "building"
+    palette: [AIR],
+    paletteKey: new Map([[entryKey(AIR), 0]]),
+    blocks: {
+      block: ((st && st.block) || "minecraft:stone").trim() || "minecraft:stone",
+      stairBlock: ((st && st.stairBlock) || "minecraft:oak_stairs").trim() || "minecraft:oak_stairs",
+    },
+  };
+}
+
+/** パレットに項目を登録して添字を返す。同じ内容なら使い回す */
+function paletteIndex(g, entry) {
+  const key = entryKey(entry);
+  const hit = g.paletteKey.get(key);
+  if (hit != null) return hit;
+  const i = g.palette.length;
+  g.palette.push(entry);
+  g.paletteKey.set(key, i);
+  return i;
+}
+
+/** 種別と向きから、そのグリッドで使うブロックを決める */
+function kindEntry(g, kind, dir) {
+  if (kind === K.EMPTY) return AIR;
+  if (kind === K.STAIR && DIR_NAME[dir]) {
+    return { id: g.blocks.stairBlock, props: { facing: DIR_NAME[dir] }, kind, dir };
+  }
+  return { id: g.blocks.block, props: {}, kind, dir: DIR.NONE };
+}
+
+const inBounds = (g, x, y, z) => !(x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy);
+
+/** パレット添字 */
+function gIdx(g, x, y, z) {
+  if (!inBounds(g, x, y, z)) return 0;
   return g.layers[y][z * g.sx + x];
 }
 
-function gDir(g, x, y, z) {
-  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return DIR.NONE;
-  return g.dirs[y][z * g.sx + x];
+/** パレット項目。空気なら AIR */
+function gBlock(g, x, y, z) {
+  return g.palette[gIdx(g, x, y, z)] || AIR;
 }
 
+/** 種別。空きは K.EMPTY（0）なので、真偽値としてそのまま使える */
+function gGet(g, x, y, z) {
+  return gBlock(g, x, y, z).kind;
+}
+
+function gDir(g, x, y, z) {
+  return gBlock(g, x, y, z).dir;
+}
+
+/** 種別と向きで置く。パラメトリック生成はすべてこれを通る */
 function gSet(g, x, y, z, kind, dir) {
-  if (x < 0 || z < 0 || y < 0 || x >= g.sx || z >= g.sz || y >= g.sy) return;
-  g.layers[y][z * g.sx + x] = kind;
-  if (dir != null) g.dirs[y][z * g.sx + x] = dir;
+  if (!inBounds(g, x, y, z)) return;
+  const idx = kind === K.EMPTY ? 0 : paletteIndex(g, kindEntry(g, kind, dir || DIR.NONE));
+  g.layers[y][z * g.sx + x] = idx;
+}
+
+/** パレット添字で直接置く。読み込み側で使う */
+function gSetIdx(g, x, y, z, idx) {
+  if (!inBounds(g, x, y, z)) return;
+  g.layers[y][z * g.sx + x] = idx;
 }
 
 function countBlocks(g) {
@@ -553,11 +622,14 @@ function countLayer(g, y) {
 }
 
 function countKind(g, kind) {
-  let n = 0;
+  // 添字ごとに数えてから種別に畳む。パレットは小さいのでこのほうが速い
+  const per = new Uint32Array(g.palette.length);
   for (let y = 0; y < g.sy; y++) {
     const a = g.layers[y];
-    for (let i = 0; i < a.length; i++) if (a[i] === kind) n++;
+    for (let i = 0; i < a.length; i++) per[a[i]]++;
   }
+  let n = 0;
+  for (let i = 1; i < g.palette.length; i++) if (g.palette[i].kind === kind) n += per[i];
   return n;
 }
 
@@ -605,8 +677,9 @@ function fillSolid(g, solidFn, opts) {
     });
   }
 
+  const solidIdx = paletteIndex(g, kindEntry(g, K.BLOCK, DIR.NONE));
   for (let y = 0; y < sy; y++) {
-    for (let i = 0; i < keep[y].length; i++) if (keep[y][i]) g.layers[y][i] = K.BLOCK;
+    for (let i = 0; i < keep[y].length; i++) if (keep[y][i]) g.layers[y][i] = solidIdx;
   }
 }
 
@@ -637,12 +710,13 @@ function erode(vol, sx, sy, sz, o) {
 function markEdges(g) {
   for (let y = 0; y < g.sy; y++) {
     const src = g.layers[y].slice();
+    // src はパレット添字。0 以外なら何かが置かれている
     const at = (x, z) => (x < 0 || z < 0 || x >= g.sx || z >= g.sz) ? 0 : src[z * g.sx + x];
     for (let z = 0; z < g.sz; z++) {
       for (let x = 0; x < g.sx; x++) {
-        if (src[z * g.sx + x] !== K.BLOCK) continue;
+        if ((g.palette[src[z * g.sx + x]] || AIR).kind !== K.BLOCK) continue;
         if (!at(x - 1, z) || !at(x + 1, z) || !at(x, z - 1) || !at(x, z + 1)) {
-          g.layers[y][z * g.sx + x] = K.EDGE;
+          gSet(g, x, y, z, K.EDGE, DIR.NONE);
         }
       }
     }
@@ -661,9 +735,9 @@ function buildCylinder(st) {
   const even = !!st.even;
   const h = clampInt(st.height, 1, MAX_H);
   const X = axisOf(rx, even), Z = axisOf(rz, even);
-  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1, st);
 
-  const g = makeGrid(X.n, h, Z.n);
+  const g = makeGrid(X.n, h, Z.n, st);
   g.labelX0 = -rx; g.labelZ0 = -rz;
   fillSolid(g, (x, y, z) => {
     const dx = (x - X.center) / X.semi, dz = (z - Z.center) / Z.semi;
@@ -677,11 +751,11 @@ function buildSphere(st, dome) {
   const rx = clampInt(st.rx, 0, MAX_R), ry = clampInt(st.ry, 0, MAX_R), rz = clampInt(st.rz, 0, MAX_R);
   const even = !!st.even;
   const X = axisOf(rx, even), Y = axisOf(ry, even), Z = axisOf(rz, even);
-  if (X.n < 1 || Y.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+  if (X.n < 1 || Y.n < 1 || Z.n < 1) return makeGrid(1, 1, 1, st);
 
   const y0 = dome ? Math.ceil(Y.center) : 0;
   const sy = Y.n - y0;
-  const g = makeGrid(X.n, sy, Z.n);
+  const g = makeGrid(X.n, sy, Z.n, st);
   g.labelX0 = -rx; g.labelZ0 = -rz;
   fillSolid(g, (x, y, z) => {
     const dx = (x - X.center) / X.semi;
@@ -698,9 +772,9 @@ function buildCone(st) {
   const even = !!st.even;
   const h = clampInt(st.height, 1, MAX_H);
   const X = axisOf(rx, even), Z = axisOf(rz, even);
-  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1);
+  if (X.n < 1 || Z.n < 1) return makeGrid(1, 1, 1, st);
 
-  const g = makeGrid(X.n, h, Z.n);
+  const g = makeGrid(X.n, h, Z.n, st);
   g.labelX0 = -rx; g.labelZ0 = -rz;
   // 層ごとの半径は整数に丸めてから円にする。中途半端な半径のまま描くと、
   // 途中の層で 1 マス幅のとげが出る。丸めると、どの層も普通の円になる
@@ -736,7 +810,7 @@ function buildGable(st) {
   }
   if (!rows.length) rows.push(0);
 
-  const g = makeGrid(w, rows.length, d);
+  const g = makeGrid(w, rows.length, d, st);
   for (let y = 0; y < rows.length; y++) {
     const a = rows[y], b = Math.min(a + run - 1, Math.floor((w - 1) / 2));
     for (let x = a; x <= b; x++) {
@@ -769,7 +843,7 @@ function buildHip(st) {
   const maxInset = Math.floor(Math.min(w - 1, d - 1) / 2);
   const sy = Math.min(MAX_H, Math.floor(maxInset / run) + 1);
 
-  const g = makeGrid(w, sy, d);
+  const g = makeGrid(w, sy, d, st);
   for (let y = 0; y < sy; y++) {
     const a = y * run, b = a + run - 1;
     for (let z = 0; z < d; z++) {
@@ -804,7 +878,7 @@ function buildShed(st) {
   const run = clampInt(st.run, 1, 8);
   const sy = Math.min(MAX_H, Math.ceil(w / run));
 
-  const g = makeGrid(w, sy, d);
+  const g = makeGrid(w, sy, d, st);
   for (let y = 0; y < sy; y++) {
     const a = y * run, b = Math.min(a + run - 1, w - 1);
     for (let x = a; x <= b; x++) {
@@ -849,7 +923,7 @@ function buildSpiral(st) {
   const r = clampInt(st.radius, 1, 24);
   const h = clampInt(st.height, 1, MAX_H);
   const steps = spiralSteps(st);
-  const g = makeGrid(2 * r + 1, h, 2 * r + 1);
+  const g = makeGrid(2 * r + 1, h, 2 * r + 1, st);
   g.labelX0 = -r; g.labelZ0 = -r;
 
   for (let i = 0; i < steps.length; i++) {
@@ -890,7 +964,7 @@ function buildArch(st) {
   const sx = span + 2 * t;
   const archH = rise + t + 1;                       // 輪が閉じるまでに要る高さ
   const sy = Math.min(MAX_H, legs + archH);
-  const g = makeGrid(sx, sy, d);
+  const g = makeGrid(sx, sy, d, st);
   g.labelX0 = -Math.floor(sx / 2); g.labelZ0 = 0;
 
   const cx = (sx - 1) / 2;
@@ -1002,6 +1076,12 @@ function shapeSummary(st) {
   return SHAPES[s].label + "  " + parts.join(" / ") + (flags.length ? "  [" + flags.join(", ") + "]" : "");
 }
 
+/** 図面のタイトル。形状／読み込み／建物のどれでも 1 行で言い切る */
+function gridTitle(st, g) {
+  if (g.title) return g.title;
+  return shapeSummary(st);
+}
+
 function cellChar(kind, dir) {
   if (kind === K.EMPTY) return ".";
   if (kind === K.STAIR) return DIR_ARROW[dir] || "#";
@@ -1010,18 +1090,69 @@ function cellChar(kind, dir) {
   return "#";
 }
 
+const SYMBOLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/**
+ * テキスト図面で使う記号をパレット項目ごとに決める。
+ *
+ * パラメトリック生成は種別が数えるほどしかないので、これまでどおり
+ * # ^ > v < + | を使う。読み込んだ建築のようにブロックの種類が多いものは、
+ * 多い順に A-Z a-z 0-9 を割り当てて凡例を付ける。
+ */
+function symbolMap(g) {
+  if (g.source === "shape") {
+    return { symbols: g.palette.map((e) => cellChar(e.kind, e.dir)), legend: null };
+  }
+  const per = new Uint32Array(g.palette.length);
+  for (let y = 0; y < g.sy; y++) {
+    const a = g.layers[y];
+    for (let i = 0; i < a.length; i++) per[a[i]]++;
+  }
+  const order = [];
+  for (let i = 1; i < g.palette.length; i++) if (per[i]) order.push(i);
+  order.sort((a, b) => per[b] - per[a]);
+
+  const symbols = new Array(g.palette.length).fill("?");
+  symbols[0] = ".";
+  const legend = [];
+  for (let n = 0; n < order.length; n++) {
+    const i = order[n];
+    const ch = n < SYMBOLS.length ? SYMBOLS[n] : "?";
+    symbols[i] = ch;
+    legend.push({ ch, entry: g.palette[i], count: per[i] });
+  }
+  return { symbols, legend };
+}
+
+/** "minecraft:oak_stairs[facing=east]" の形にする */
+function blockName(entry) {
+  const k = propsKey(entry.props);
+  return entry.id + (k ? "[" + k + "]" : "");
+}
+
+/** 表示用の短い名前。名前空間を落とす */
+function blockShort(entry) {
+  return entry.id.replace(/^minecraft:/, "");
+}
+
 function buildText(st, g) {
+  const { symbols, legend } = symbolMap(g);
   const lines = [];
-  lines.push("# マイクラ図面: " + shapeSummary(st));
+  lines.push("# マイクラ図面: " + gridTitle(st, g));
   lines.push("# 寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）  総ブロック数 " + countBlocks(g));
   lines.push("# X は左から右（西→東）、Z は上から下（北→南）。左上のセルが x=" + g.labelX0 + ", z=" + g.labelZ0);
-  lines.push("# 凡例  # ブロック  ^ > v < 階段（矢印は上り方向）  + 隅棟  | 柱  . 空");
+  if (legend) {
+    lines.push("# 凡例  . 空");
+    for (const l of legend) lines.push("#   " + l.ch + " = " + blockName(l.entry) + "  ×" + l.count);
+  } else {
+    lines.push("# 凡例  # ブロック  ^ > v < 階段（矢印は上り方向）  + 隅棟  | 柱  . 空");
+  }
   lines.push("");
   for (let y = 0; y < g.sy; y++) {
     lines.push("## " + (y + 1) + " 段目 / 全 " + g.sy + " 段   ブロック " + countLayer(g, y));
     for (let z = 0; z < g.sz; z++) {
       let row = "";
-      for (let x = 0; x < g.sx; x++) row += cellChar(gGet(g, x, y, z), gDir(g, x, y, z));
+      for (let x = 0; x < g.sx; x++) row += symbols[gIdx(g, x, y, z)];
       lines.push(row);
     }
     lines.push("");
@@ -1030,22 +1161,17 @@ function buildText(st, g) {
 }
 
 function buildCommands(st, g) {
-  const block = (st.block || "minecraft:stone").trim() || "minecraft:stone";
-  const stairBlock = (st.stairBlock || "minecraft:oak_stairs").trim() || "minecraft:oak_stairs";
+  const names = g.palette.map((e) => blockName(e));
   const lines = [];
-  lines.push("# マイクラ図面: " + shapeSummary(st));
+  lines.push("# マイクラ図面: " + gridTitle(st, g));
   lines.push("# 実行位置が原点。~ は相対座標なので、建てたい場所で実行してください。");
   lines.push("# 総ブロック数 " + countBlocks(g));
   for (let y = 0; y < g.sy; y++) {
     for (let z = 0; z < g.sz; z++) {
       for (let x = 0; x < g.sx; x++) {
-        const kind = gGet(g, x, y, z);
-        if (!kind) continue;
-        const dir = gDir(g, x, y, z);
-        const name = (kind === K.STAIR && DIR_NAME[dir])
-          ? stairBlock + "[facing=" + DIR_NAME[dir] + "]"
-          : block;
-        lines.push("setblock ~" + (x + g.labelX0) + " ~" + y + " ~" + (z + g.labelZ0) + " " + name);
+        const idx = gIdx(g, x, y, z);
+        if (!idx) continue;
+        lines.push("setblock ~" + (x + g.labelX0) + " ~" + y + " ~" + (z + g.labelZ0) + " " + names[idx]);
       }
     }
   }
@@ -1207,6 +1333,114 @@ function kindColor(kind) {
   }
 }
 
+/* ---------- ブロックの色 ----------
+   読み込んだ建築は種類が多いので、テーマの色ではなく素材そのものの色で塗る。
+   地図と同じ考え方で、明暗どちらのテーマでも同じ色になる。
+   表に無い ID は、系統ごとのルール → ID のハッシュ、の順で色を決める。 */
+
+const COLOR_WORDS = {
+  white: "#e9ecec", orange: "#f07613", magenta: "#bd44b3", light_blue: "#3aafd9",
+  yellow: "#f8c627", lime: "#70b919", pink: "#ed8dac", gray: "#3e4447",
+  light_gray: "#8e8e86", cyan: "#158991", purple: "#792aac", blue: "#35399d",
+  brown: "#724728", green: "#546d1b", red: "#a12722", black: "#141519",
+};
+
+const WOOD_COLORS = {
+  oak: "#b8945f", spruce: "#785836", birch: "#d7cb8d", jungle: "#a3714a",
+  acacia: "#ba6337", dark_oak: "#4f3218", mangrove: "#773934", cherry: "#e3a8b0",
+  pale_oak: "#e4dcd4", bamboo: "#c3b23c", crimson: "#7b3a55", warped: "#3a8e8c",
+};
+
+const BLOCK_COLORS = {
+  stone: "#7f7f7f", cobblestone: "#7a7a7a", mossy_cobblestone: "#6a7a5f",
+  stone_bricks: "#7a7a7a", mossy_stone_bricks: "#6f7a68", cracked_stone_bricks: "#767470",
+  smooth_stone: "#9c9c9c", andesite: "#8a8a86", diorite: "#c9c9c6", granite: "#9d6b53",
+  deepslate: "#4c4c50", cobbled_deepslate: "#4e4e52", deepslate_bricks: "#474749",
+  tuff: "#6c6f60", calcite: "#dfdedb", dripstone_block: "#8a6a5a", basalt: "#4f4f57",
+  blackstone: "#2b2426", netherrack: "#6e3634", nether_bricks: "#2e171c",
+  end_stone: "#dbdd9f", end_stone_bricks: "#d9dba1", purpur_block: "#a97fa9",
+  obsidian: "#120f1c", crying_obsidian: "#1f0f3b", bedrock: "#565656",
+  dirt: "#87613f", coarse_dirt: "#7b5a3a", rooted_dirt: "#916b4e",
+  grass_block: "#7bb33a", podzol: "#5b3d1f", mycelium: "#6f6265",
+  sand: "#dbd3a0", red_sand: "#b0561e", sandstone: "#d9d2a5", red_sandstone: "#b0561e",
+  gravel: "#84807f", clay: "#a0a7b4", terracotta: "#985e43",
+  snow_block: "#f0fafa", ice: "#7ea9f7", packed_ice: "#7ba4f7", blue_ice: "#74a7fa",
+  glass: "#adcfe0", glass_pane: "#adcfe0", tinted_glass: "#3a3540",
+  water: "#3a63c8", lava: "#e8721a", soul_sand: "#513b2e", soul_soil: "#4c382b",
+  magma_block: "#8e3c1d", sponge: "#c5c552", wet_sponge: "#a5ab4e",
+  bricks: "#985542", prismarine: "#5f9187", sea_lantern: "#b7cfc6", glowstone: "#f2c86e",
+  shroomlight: "#e5804a", froglight: "#f2eeb1", amethyst_block: "#8567c4",
+  iron_block: "#d8d8d8", gold_block: "#f9ec4e", diamond_block: "#5decdc",
+  emerald_block: "#2fd063", netherite_block: "#443c3d", copper_block: "#c06c50",
+  coal_block: "#131313", redstone_block: "#c62b1a", lapis_block: "#1c50a4",
+  quartz_block: "#eae5dd", smooth_quartz: "#eae5dd", quartz_pillar: "#e9e4dc",
+  bookshelf: "#8b6c43", crafting_table: "#8b6c43", chest: "#a3762f", trapped_chest: "#a3762f",
+  barrel: "#88632f", furnace: "#6d6d6d", blast_furnace: "#5b5b5b", smoker: "#5f5548",
+  hopper: "#4a4a4e", dropper: "#6d6d6d", dispenser: "#6d6d6d", observer: "#5a5a5e",
+  piston: "#9c7f4e", sticky_piston: "#7e9c4e", piston_head: "#9c7f4e",
+  redstone_wire: "#c62b1a", redstone_torch: "#e04a3a", redstone_lamp: "#9a6a3c",
+  repeater: "#b6b0aa", comparator: "#b6b0aa", target: "#ded3c8", lever: "#8b6c43",
+  note_block: "#6b4b2c", tnt: "#c8402c", slime_block: "#77c25a", honey_block: "#f9a824",
+  rail: "#9a8b6e", powered_rail: "#c6902b", detector_rail: "#a08a6a", activator_rail: "#8a6a52",
+  torch: "#f2c86e", lantern: "#f0b05a", soul_lantern: "#4fd1c0", campfire: "#c8752c",
+  ladder: "#8b6c43", scaffolding: "#c8a86a", string: "#d5d5d5", tripwire: "#d5d5d5",
+  cobweb: "#e4e9ea", vine: "#4e7a2b", moss_block: "#5b7a34", sculk: "#0f2b31",
+  hay_block: "#c8a01c", composter: "#795a35", cauldron: "#4a4a4e", anvil: "#484848",
+  beacon: "#7ce4dc", conduit: "#a08d6f", spawner: "#213850", end_portal_frame: "#3a6b5e",
+  farmland: "#5f3f22", dirt_path: "#9a7c46", wheat: "#c8bb4a", sugar_cane: "#8bc45a",
+  bamboo: "#5f9b2a", kelp: "#2f6b2a", lily_pad: "#3f7a2a", nether_wart: "#7a1d1d",
+  air: "#00000000", cave_air: "#00000000", void_air: "#00000000",
+};
+
+/** 表に無い ID を、系統ごとのルールで拾う */
+function ruleColor(name) {
+  for (const [word, col] of Object.entries(COLOR_WORDS)) {
+    // light_gray を gray より先に見たいので、長い語から順に当てる必要がある
+    if (name.startsWith(word + "_")) {
+      if (/_(wool|concrete|concrete_powder|terracotta|glass|glass_pane|carpet|bed|banner|shulker_box|candle|glazed_terracotta)$/.test(name)) return col;
+    }
+  }
+  for (const [wood, col] of Object.entries(WOOD_COLORS)) {
+    if (name.startsWith(wood + "_") || name === wood + "_wood") return col;
+  }
+  if (/(^|_)(planks|log|wood|fence|door|trapdoor|sign|button|pressure_plate)$/.test(name)) return "#b8945f";
+  if (name.includes("deepslate")) return "#4c4c50";
+  if (name.includes("copper")) return "#c06c50";
+  if (name.includes("quartz")) return "#eae5dd";
+  if (name.includes("prismarine")) return "#5f9187";
+  if (name.includes("purpur")) return "#a97fa9";
+  if (name.includes("nether_brick")) return "#2e171c";
+  if (name.includes("sandstone")) return "#d9d2a5";
+  if (name.includes("stone") || name.includes("cobble")) return "#7f7f7f";
+  if (name.includes("glass")) return "#adcfe0";
+  if (name.includes("redstone")) return "#c62b1a";
+  if (name.includes("water")) return "#3a63c8";
+  if (name.includes("lava")) return "#e8721a";
+  if (name.includes("leaves")) return "#4a7a2a";
+  if (name.includes("ice")) return "#7ea9f7";
+  if (name.includes("wool") || name.includes("concrete")) return "#c9c9c6";
+  return null;
+}
+
+/** 最後の手段。ID から色相を決めて、彩度と明度は固定する（必ず見分けがつく） */
+function hashColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return "hsl(" + (h % 360) + " 42% 58%)";
+}
+
+const colorCache = new Map();
+
+function blockColor(entry, g) {
+  if (!entry || entry.kind === K.EMPTY) return "#00000000";
+  if (g && g.source === "shape") return kindColor(entry.kind);
+  const name = blockShort(entry);
+  if (colorCache.has(name)) return colorCache.get(name);
+  const col = BLOCK_COLORS[name] || ruleColor(name) || hashColor(name);
+  colorCache.set(name, col);
+  return col;
+}
+
 /** 平面図。cell はセルの一辺（px）、gutter は座標目盛りの帯 */
 function drawPlan(canvas, g, y, opts) {
   const o = opts || {};
@@ -1237,12 +1471,11 @@ function drawPlan(canvas, g, y, opts) {
   // セル本体
   for (let z = 0; z < g.sz; z++) {
     for (let x = 0; x < g.sx; x++) {
-      const kind = gGet(g, x, y, z);
-      if (!kind) continue;
-      ctx.fillStyle = kindColor(kind);
+      const e = gBlock(g, x, y, z);
+      if (e.kind === K.EMPTY) continue;
+      ctx.fillStyle = blockColor(e, g);
       ctx.fillRect(gutter + x * cell, gutter + z * cell, cell, cell);
-      const dir = gDir(g, x, y, z);
-      if (kind === K.STAIR && dir && cell >= 10) drawArrow(ctx, gutter + x * cell, gutter + z * cell, cell, dir);
+      if (e.dir && cell >= 10) drawArrow(ctx, gutter + x * cell, gutter + z * cell, cell, e.dir);
     }
   }
 
@@ -1321,17 +1554,18 @@ function drawElevation(canvas, g, mode) {
   for (let y = 0; y < g.sy; y++) {
     const py = (g.sy - 1 - y) * cell;
     for (let x = 0; x < g.sx; x++) {
-      let kind = K.EMPTY;
+      let e = AIR;
       if (mode === "section") {
-        kind = gGet(g, x, y, zc);
+        e = gBlock(g, x, y, zc);
       } else {
+        // 投影は、手前から見て最初に当たったブロックの色を使う
         for (let z = 0; z < g.sz; z++) {
-          const k = gGet(g, x, y, z);
-          if (k) { kind = (kind && kind !== k) ? K.BLOCK : k; if (k === K.EDGE) break; }
+          const cand = gBlock(g, x, y, z);
+          if (cand.kind !== K.EMPTY) { e = cand; if (cand.kind === K.EDGE) break; }
         }
       }
-      if (!kind) continue;
-      ctx.fillStyle = kindColor(kind);
+      if (e.kind === K.EMPTY) continue;
+      ctx.fillStyle = blockColor(e, g);
       ctx.fillRect(gutter + x * cell, py, cell, cell);
     }
   }
