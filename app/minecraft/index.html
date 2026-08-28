@@ -219,6 +219,17 @@ canvas { display: block; max-width: 100%; }
 /* ---------- テキスト出力 ---------- */
 .outbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
 .outbar .path { flex: 1; font-size: 12.5px; color: var(--muted); }
+table.mats { border-collapse: collapse; width: 100%; font-size: 13px; background: var(--panel); }
+table.mats th, table.mats td { border-bottom: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+table.mats th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+table.mats td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.mats td.sw-cell { width: 1px; padding-right: 0; }
+table.mats .chip-color { display: inline-block; width: 13px; height: 13px; border-radius: 3px; border: 1px solid var(--line); vertical-align: -2px; }
+table.mats tbody tr:hover { background: var(--panel-2); }
+.mats-head { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+.mats-layer { margin-top: 18px; }
+.mats-layer > h4 { font-size: 12.5px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+
 pre.code {
   margin: 0; padding: 14px 16px;
   background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
@@ -294,6 +305,7 @@ pre.code {
     <div class="tabs" role="tablist">
       <button data-tab="plan" role="tab" aria-selected="true">平面図</button>
       <button data-tab="sheet" role="tab" aria-selected="false">全レイヤー</button>
+      <button data-tab="mats" role="tab" aria-selected="false">材料</button>
       <button data-tab="text" role="tab" aria-selected="false">テキスト</button>
       <button data-tab="cmd" role="tab" aria-selected="false">コマンド</button>
     </div>
@@ -323,6 +335,15 @@ pre.code {
     <div class="tabpanel" id="tab-sheet">
       <div class="stats" id="sheet-stats" style="margin-bottom:12px"></div>
       <div class="sheet" id="sheet"></div>
+    </div>
+
+    <div class="tabpanel" id="tab-mats">
+      <div class="outbar">
+        <span class="path mono">materials.txt</span>
+        <button class="mini" id="btn-copy-mats">コピー</button>
+        <label class="sw" style="margin:0"><input type="checkbox" id="mats-per-layer"> 段ごとの内訳も出す</label>
+      </div>
+      <div id="mats-out"></div>
     </div>
 
     <div class="tabpanel" id="tab-text">
@@ -1124,6 +1145,89 @@ function symbolMap(g) {
   return { symbols, legend };
 }
 
+/**
+ * 材料表。ブロック ID ごとに集計する。
+ * facing 違い（階段やホッパーの向き）は同じ ID なので 1 行にまとめる。
+ * 建てる前に用意する量が分かるよう、スタック換算（64 個 = 1 スタック）も出す。
+ */
+function buildMaterials(g) {
+  const per = new Uint32Array(g.palette.length);
+  const perLayer = [];
+  for (let y = 0; y < g.sy; y++) {
+    const a = g.layers[y];
+    const row = new Uint32Array(g.palette.length);
+    for (let i = 0; i < a.length; i++) { per[a[i]]++; row[a[i]]++; }
+    perLayer.push(row);
+  }
+
+  const byId = new Map();
+  for (let i = 1; i < g.palette.length; i++) {
+    if (!per[i]) continue;
+    const e = g.palette[i];
+    let row = byId.get(e.id);
+    if (!row) {
+      row = { id: e.id, name: blockShort(e), count: 0, entry: e, states: [] };
+      byId.set(e.id, row);
+    }
+    row.count += per[i];
+    const st = propsKey(e.props);
+    if (st && !row.states.includes(st)) row.states.push(st);
+  }
+
+  const items = Array.from(byId.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  for (const it of items) {
+    it.stacks = Math.floor(it.count / 64);
+    it.rest = it.count % 64;
+    it.states.sort();
+  }
+  return { items, total: items.reduce((n, it) => n + it.count, 0), per, perLayer };
+}
+
+/** 段ごとの内訳。materials.perLayer を ID 単位に畳む */
+function layerMaterials(g, mats, y) {
+  const row = mats.perLayer[y];
+  if (!row) return [];
+  const byId = new Map();
+  for (let i = 1; i < g.palette.length; i++) {
+    if (!row[i]) continue;
+    const e = g.palette[i];
+    const cur = byId.get(e.id) || { id: e.id, name: blockShort(e), count: 0, entry: e };
+    cur.count += row[i];
+    byId.set(e.id, cur);
+  }
+  return Array.from(byId.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** スタック換算の表示。64 個で 1 スタック */
+function stackLabel(count) {
+  const st = Math.floor(count / 64), rest = count % 64;
+  if (!st) return rest + " 個";
+  return st + " スタック" + (rest ? " + " + rest + " 個" : "");
+}
+
+function buildMaterialsText(st, g, withLayers) {
+  const mats = buildMaterials(g);
+  const lines = [];
+  lines.push("# 材料表: " + gridTitle(st, g));
+  lines.push("# 寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）");
+  lines.push("# 合計 " + mats.total + " 個 / " + mats.items.length + " 種類");
+  lines.push("");
+  const w = Math.max(0, ...mats.items.map((i) => i.name.length));
+  for (const it of mats.items) {
+    lines.push(it.name.padEnd(w) + "  " + String(it.count).padStart(6) + " 個  (" + stackLabel(it.count) + ")");
+  }
+  if (withLayers) {
+    for (let y = 0; y < g.sy; y++) {
+      const rows = layerMaterials(g, mats, y);
+      if (!rows.length) continue;
+      lines.push("");
+      lines.push("## " + (y + 1) + " 段目");
+      for (const r of rows) lines.push("  " + r.name + " ×" + r.count);
+    }
+  }
+  return lines.join("\n");
+}
+
 /** "minecraft:oak_stairs[facing=east]" の形にする */
 function blockName(entry) {
   const k = propsKey(entry.props);
@@ -1610,6 +1714,55 @@ function renderLegend(g) {
   }
 }
 
+function renderMaterials(g) {
+  const wrap = $("#mats-out");
+  wrap.textContent = "";
+  const mats = buildMaterials(g);
+
+  if (!mats.items.length) {
+    wrap.appendChild(h("p", { class: "mats-head", text: "ブロックがありません。" }));
+    return;
+  }
+
+  wrap.appendChild(h("p", {
+    class: "mats-head",
+    text: "合計 " + mats.total.toLocaleString() + " 個 / " + mats.items.length + " 種類  —  多い順",
+  }));
+
+  const rows = mats.items.map((it) => h("tr", {}, [
+    h("td", { class: "sw-cell" }, [h("span", { class: "chip-color", style: "background:" + blockColor(it.entry, g) })]),
+    h("td", {}, [
+      h("span", { class: "mono", text: it.name }),
+      it.states.length ? h("span", { class: "hint", style: "margin:0 0 0 8px; display:inline", text: it.states.join(" / ") }) : null,
+    ]),
+    h("td", { class: "num", text: it.count.toLocaleString() }),
+    h("td", { class: "num", text: stackLabel(it.count) }),
+  ]));
+
+  wrap.appendChild(h("table", { class: "mats" }, [
+    h("thead", {}, [h("tr", {}, [
+      h("th", { text: "" }), h("th", { text: "ブロック" }),
+      h("th", { class: "num", text: "個数" }), h("th", { class: "num", text: "スタック" }),
+    ])]),
+    h("tbody", {}, rows),
+  ]));
+
+  if (!$("#mats-per-layer").checked) return;
+
+  for (let y = 0; y < g.sy; y++) {
+    const list = layerMaterials(g, mats, y);
+    if (!list.length) continue;
+    wrap.appendChild(h("div", { class: "mats-layer" }, [
+      h("h4", { text: (y + 1) + " 段目 — " + countLayer(g, y).toLocaleString() + " 個" }),
+      h("table", { class: "mats" }, [h("tbody", {}, list.map((r) => h("tr", {}, [
+        h("td", { class: "sw-cell" }, [h("span", { class: "chip-color", style: "background:" + blockColor(r.entry, g) })]),
+        h("td", {}, [h("span", { class: "mono", text: r.name })]),
+        h("td", { class: "num", text: r.count.toLocaleString() }),
+      ])))]),
+    ]));
+  }
+}
+
 function planCellSize(g) {
   const avail = Math.max(260, ($("#tab-plan").clientWidth || 700) - 60);
   return Math.max(6, Math.min(26, Math.floor((avail - 24) / Math.max(g.sx, 1))));
@@ -1663,6 +1816,7 @@ function renderOutputs() {
     (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "");
 
   if (activeTab === "sheet") renderSheet(g);
+  if (activeTab === "mats") renderMaterials(g);
   if (activeTab === "text") $("#text-out").textContent = buildText(state, g);
   if (activeTab === "cmd") $("#cmd-out").textContent = buildCommands(state, g);
 
@@ -1777,6 +1931,10 @@ function initEvents() {
   });
   $("#plan").addEventListener("mouseleave", () => { $("#readout").textContent = ""; });
 
+  $("#mats-per-layer").addEventListener("change", renderOutputs);
+  $("#btn-copy-mats").addEventListener("click", () => {
+    copyText(buildMaterialsText(state, build(state), $("#mats-per-layer").checked), "材料表");
+  });
   $("#btn-copy-text").addEventListener("click", () => copyText(buildText(state, build(state)), "テキスト図面"));
   $("#btn-copy-cmd").addEventListener("click", () => copyText(buildCommands(state, build(state)), "コマンド"));
   $("#btn-dl-text").addEventListener("click", () => {
@@ -2100,6 +2258,62 @@ function runSelfTest() {
     const good = state.shape === "dome" && state.rx === 12;
     state = JSON.parse(saved);
     return good;
+  })());
+
+  // --- 11. 材料表 ---
+  const matSt = st({ shape: "gable", width: 11, depth: 5, run: 1, stairs: true, gableEnds: true,
+                     block: "minecraft:stone_bricks", stairBlock: "minecraft:oak_stairs" });
+  const matG = buildGable(matSt);
+  const mats = buildMaterials(matG);
+  ok("材料の合計がグリッドの総ブロック数と一致", mats.total === countBlocks(matG),
+    mats.total + " vs " + countBlocks(matG));
+  ok("facing 違いは 1 行にまとまる", (() => {
+    const stairs = mats.items.filter((i) => i.id === "minecraft:oak_stairs");
+    return stairs.length === 1 && stairs[0].states.length === 2 &&
+      stairs[0].count === countKind(matG, K.STAIR);
+  })());
+  ok("入力したブロック ID がそのまま材料になる",
+    mats.items.some((i) => i.id === "minecraft:stone_bricks"));
+  ok("材料は多い順に並ぶ", mats.items.every((it, i) => i === 0 || mats.items[i - 1].count >= it.count));
+  ok("スタック換算が正しい",
+    stackLabel(63) === "63 個" && stackLabel(64) === "1 スタック" && stackLabel(130) === "2 スタック + 2 個");
+  ok("段ごとの内訳の合計が、その段のブロック数と一致", (() => {
+    for (let y = 0; y < matG.sy; y++) {
+      const sum = layerMaterials(matG, mats, y).reduce((n, r) => n + r.count, 0);
+      if (sum !== countLayer(matG, y)) return false;
+    }
+    return true;
+  })());
+  ok("材料表のテキストに合計・スタック・段ごとの内訳が入る", (() => {
+    // 64 個を超える材料が出る大きさにして、スタック表記まで確かめる
+    const bigSt = st({ shape: "gable", width: 31, depth: 21, run: 1, stairs: true, gableEnds: true });
+    const bigG = buildGable(bigSt);
+    const t = buildMaterialsText(bigSt, bigG, true);
+    return /合計 \d+ 個/.test(t) && /スタック/.test(t) && /## 1 段目/.test(t) &&
+      buildMaterials(bigG).items.some((i) => i.count >= 64);
+  })());
+  ok("空のグリッドでも材料表が壊れない", (() => {
+    const empty = makeGrid(2, 2, 2, defaultState());
+    const m = buildMaterials(empty);
+    return m.total === 0 && m.items.length === 0;
+  })());
+
+  // --- 12. パレット ---
+  ok("空気はかならず添字 0", matG.palette[0].kind === K.EMPTY && gIdx(matG, 0, 0, 0) >= 0);
+  ok("向きの違う階段は別のパレット項目", (() => {
+    const ids = matG.palette.filter((e) => e.kind === K.STAIR).map((e) => propsKey(e.props));
+    return ids.includes("facing=east") && ids.includes("facing=west");
+  })());
+  ok("輪郭と内側は同じブロックだが別項目", (() => {
+    const c = buildCylinder(st({ shape: "cylinder", rx: 5, rz: 5, height: 1, hollow: false }));
+    const kinds = new Set(c.palette.slice(1).map((e) => e.kind));
+    const ids = new Set(c.palette.slice(1).map((e) => e.id));
+    return kinds.has(K.BLOCK) && kinds.has(K.EDGE) && ids.size === 1;
+  })());
+  ok("パレットは同じ内容を使い回す", (() => {
+    const g2 = makeGrid(4, 1, 4, defaultState());
+    for (let x = 0; x < 4; x++) gSet(g2, x, 0, 0, K.BLOCK, DIR.NONE);
+    return g2.palette.length === 2;
   })());
 
   // --- 結果表示 ---
