@@ -317,6 +317,7 @@ pre.code {
     <div class="modes" id="modes" role="tablist">
       <button data-mode="shape" role="tab" aria-selected="true">形から作る</button>
       <button data-mode="import" role="tab" aria-selected="false">ファイルを読む</button>
+      <button data-mode="building" role="tab" aria-selected="false">実際の建物</button>
     </div>
 
     <div class="mode-panel" id="mode-shape">
@@ -337,6 +338,33 @@ pre.code {
       </div>
       <input type="file" id="file-schem" accept=".litematic,.schem,.schematic,.nbt" hidden>
       <div id="import-info"></div>
+    </div>
+
+    <div class="mode-panel" id="mode-building" hidden>
+      <h2>実際の建物から起こす</h2>
+      <p class="shape-desc">
+        現実の寸法（メートル）を入れると、1 ブロック何メートルで建てるかに合わせて
+        基礎・壁・床・窓・玄関・屋根の図面にします。
+      </p>
+      <div id="building-info"></div>
+      <fieldset>
+        <legend>寸法とスケール</legend>
+        <div id="building-params"></div>
+        <div class="row">
+          <div class="field">
+            <label for="f-bRoof">屋根</label>
+            <select id="f-bRoof"></select>
+          </div>
+          <div class="field">
+            <label for="f-bDoorSide">玄関の向き</label>
+            <select id="f-bDoorSide"></select>
+          </div>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>使うブロック</legend>
+        <div id="building-blocks"></div>
+      </fieldset>
     </div>
 
     <div class="warnings" id="warnings"></div>
@@ -478,6 +506,15 @@ function defaultState() {
     radius: 2, steps: 8, spinCw: true, pillar: true,
     // アーチ
     span: 11, rise: 5, archDepth: 1, archThickness: 1, legs: 3,
+    // 実際の建物（メートルで入れて、スケールでブロックに換算する）
+    bWidth: 9, bDepth: 7, bFloors: 2, bFloorHeight: 3, bScale: 1,
+    bWall: 1, bRoof: "gable",
+    bWinW: 2, bWinH: 2, bWinGap: 2, bWinSill: 1,
+    bDoorSide: "south", bDoorW: 1, bDoorH: 2,
+    bWallBlock: "minecraft:oak_planks",
+    bFloorBlock: "minecraft:stone_bricks",
+    bGlassBlock: "minecraft:glass",
+    bRoofBlock: "minecraft:dark_oak_planks",
     // コマンド出力
     block: "minecraft:stone",
     stairBlock: "minecraft:oak_stairs",
@@ -520,7 +557,30 @@ const FIELDS = {
   archDepth: { label: "奥行き Z", type: "int", min: 1, max: 32 },
   archThickness: { label: "アーチの厚み", type: "int", min: 1, max: 8 },
   legs: { label: "脚の高さ", type: "int", min: 0, max: 64 },
+
+  // 実際の建物
+  bWidth: { label: "幅（m）", type: "num", min: 1, max: 128, step: 0.1 },
+  bDepth: { label: "奥行き（m）", type: "num", min: 1, max: 128, step: 0.1 },
+  bFloorHeight: { label: "階高（m）", type: "num", min: 1.5, max: 20, step: 0.1 },
+  bFloors: { label: "階数", type: "int", min: 1, max: 16 },
+  bScale: { label: "1 ブロック = 何 m", type: "num", min: 0.25, max: 5, step: 0.05 },
+  bWall: { label: "壁の厚み（ブロック）", type: "int", min: 1, max: 4 },
+  bWinW: { label: "窓の幅（ブロック）", type: "int", min: 0, max: 16 },
+  bWinH: { label: "窓の高さ（ブロック）", type: "int", min: 0, max: 16 },
+  bWinGap: { label: "窓と窓の間隔（ブロック）", type: "int", min: 1, max: 16 },
+  bWinSill: { label: "窓の下端の高さ（ブロック）", type: "int", min: 0, max: 16 },
+  bDoorW: { label: "玄関の幅（ブロック）", type: "int", min: 1, max: 8 },
+  bDoorH: { label: "玄関の高さ（ブロック）", type: "int", min: 2, max: 8 },
 };
+
+/** 建物の入力欄。上から順に並べる */
+const BUILDING_FIELDS = [
+  "bWidth", "bDepth", "bFloorHeight", "bFloors", "bScale",
+  "bWall", "bWinW", "bWinH", "bWinGap", "bWinSill", "bDoorW", "bDoorH",
+];
+
+const ROOF_KINDS = { gable: "切妻", hip: "寄棟", flat: "陸屋根（平ら）" };
+const DOOR_SIDES = { north: "北（Z-）", south: "南（Z+）", east: "東（X+）", west: "西（X-）" };
 
 const SHAPES = {
   cylinder: {
@@ -1073,6 +1133,147 @@ function buildArch(st) {
   return g;
 }
 
+/* ---------- 実際の建物 ----------
+
+   幅・奥行き・階高をメートルで受け取り、スケール（1 ブロック = 何 m）で
+   ブロック数に換算してから、基礎 → 各階の床と壁 → 窓 → 玄関 → 屋根 の順に積む。
+   屋根は形状ジェネレータ（buildGable / buildHip）をそのまま使う。 */
+
+/** メートルをブロック数に直す。最低 1 ブロックは残す */
+function toBlocks(meters, scale) {
+  const m = Number(meters), sc = Number(scale);
+  if (!isFinite(m) || !isFinite(sc) || sc <= 0) return 1;
+  return Math.max(1, Math.round(m / sc));
+}
+
+/** 建物の寸法を、換算の過程が分かる形で返す。画面にもそのまま出す */
+function buildingDims(st) {
+  const scale = Math.min(5, Math.max(0.25, Number(st.bScale) || 1));
+  const w = Math.min(MAX_SIDE, toBlocks(st.bWidth, scale));
+  const d = Math.min(MAX_SIDE, toBlocks(st.bDepth, scale));
+  const fh = Math.max(2, Math.min(32, toBlocks(st.bFloorHeight, scale)));
+  const floors = clampInt(st.bFloors, 1, 16);
+  const wall = Math.min(clampInt(st.bWall, 1, 4), Math.max(1, Math.floor(Math.min(w, d) / 2) - 1) || 1);
+  return { scale, w, d, fh, floors, wall, bodyH: fh * floors };
+}
+
+/** src のブロックを dst に移す。パレットは dst 側に登録し直す */
+function blitGrid(dst, src, ox, oy, oz) {
+  const map = src.palette.map((e, i) => (i === 0 ? 0 : paletteIndex(dst, e)));
+  for (let y = 0; y < src.sy; y++) {
+    for (let z = 0; z < src.sz; z++) {
+      for (let x = 0; x < src.sx; x++) {
+        const idx = src.layers[y][z * src.sx + x];
+        if (!idx) continue;
+        gSetIdx(dst, ox + x, oy + y, oz + z, map[idx]);
+      }
+    }
+  }
+}
+
+/** 窓の開口を、壁の一辺に等間隔で開ける。両端は壁を残す */
+function windowRuns(span, winW, gap) {
+  const runs = [];
+  if (winW <= 0 || span < winW + 2) return runs;
+  const pitch = winW + gap;
+  const usable = span - 2;                       // 両端 1 ブロックは残す
+  const count = Math.max(0, Math.floor((usable + gap) / pitch));
+  if (!count) return runs;
+  const total = count * pitch - gap;
+  let at = 1 + Math.floor((usable - total) / 2); // 中央に寄せる
+  for (let i = 0; i < count; i++) { runs.push([at, at + winW - 1]); at += pitch; }
+  return runs;
+}
+
+function buildBuilding(st) {
+  const dim = buildingDims(st);
+  const { w, d, fh, floors, wall, bodyH } = dim;
+
+  // 屋根を先に作って高さを知る（本体の上に載せる）
+  let roof = null;
+  if (st.bRoof === "gable" || st.bRoof === "hip") {
+    const roofSt = Object.assign({}, st, {
+      width: w, depth: d, run: 1, stairs: true, gableEnds: true,
+      block: st.bRoofBlock, stairBlock: st.stairBlock,
+    });
+    roof = st.bRoof === "gable" ? buildGable(roofSt) : buildHip(roofSt);
+  }
+  const roofH = roof ? roof.sy : 1;
+
+  const g = makeGrid(w, bodyH + roofH, d, st);
+  g.source = "building";
+  g.title = "建物 " + st.bWidth + "m × " + st.bDepth + "m / " + floors + " 階（1 ブロック = " + dim.scale + "m）";
+
+  const wallIdx = paletteIndex(g, { id: st.bWallBlock, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const floorIdx = paletteIndex(g, { id: st.bFloorBlock, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const glassIdx = paletteIndex(g, { id: st.bGlassBlock, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+
+  const isWall = (x, z) => x < wall || z < wall || x >= w - wall || z >= d - wall;
+
+  for (let f = 0; f < floors; f++) {
+    const base = f * fh;
+    // 床（1 階は基礎）。壁の下まで敷いて、床が浮かないようにする
+    for (let z = 0; z < d; z++) for (let x = 0; x < w; x++) gSetIdx(g, x, base, z, floorIdx);
+    // 壁
+    for (let y = base + 1; y < base + fh; y++) {
+      for (let z = 0; z < d; z++) {
+        for (let x = 0; x < w; x++) if (isWall(x, z)) gSetIdx(g, x, y, z, wallIdx);
+      }
+    }
+    // 窓。壁を貫通させず、ガラスで塞ぐ
+    const winW = clampInt(st.bWinW, 0, 16), winH = clampInt(st.bWinH, 0, 16);
+    const gap = clampInt(st.bWinGap, 1, 16), sill = clampInt(st.bWinSill, 0, 16);
+    if (winW > 0 && winH > 0) {
+      const y0 = base + 1 + sill;
+      const y1 = Math.min(base + fh - 1, y0 + winH - 1);
+      for (const [a, b] of windowRuns(w, winW, gap)) {
+        for (let y = y0; y <= y1; y++) {
+          for (let x = a; x <= b; x++) {
+            for (let t = 0; t < wall; t++) {
+              gSetIdx(g, x, y, t, glassIdx);
+              gSetIdx(g, x, y, d - 1 - t, glassIdx);
+            }
+          }
+        }
+      }
+      for (const [a, b] of windowRuns(d, winW, gap)) {
+        for (let y = y0; y <= y1; y++) {
+          for (let z = a; z <= b; z++) {
+            for (let t = 0; t < wall; t++) {
+              gSetIdx(g, t, y, z, glassIdx);
+              gSetIdx(g, w - 1 - t, y, z, glassIdx);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 玄関。1 階の指定した面に開ける（開口なので空にする）
+  const doorW = clampInt(st.bDoorW, 1, 8);
+  const doorH = Math.min(clampInt(st.bDoorH, 2, 8), fh - 1);
+  const side = DOOR_SIDES[st.bDoorSide] ? st.bDoorSide : "south";
+  for (let y = 1; y <= doorH; y++) {
+    for (let i = 0; i < doorW; i++) {
+      for (let t = 0; t < wall; t++) {
+        if (side === "north" || side === "south") {
+          const x = Math.floor((w - doorW) / 2) + i;
+          gSetIdx(g, x, y, side === "north" ? t : d - 1 - t, 0);
+        } else {
+          const z = Math.floor((d - doorW) / 2) + i;
+          gSetIdx(g, side === "west" ? t : w - 1 - t, y, z, 0);
+        }
+      }
+    }
+  }
+
+  // 屋根
+  if (roof) blitGrid(g, roof, 0, bodyH, 0);
+  else for (let z = 0; z < d; z++) for (let x = 0; x < w; x++) gSetIdx(g, x, bodyH, z, floorIdx);
+
+  return g;
+}
+
 /** state から図面を作る。ここが唯一の入口 */
 /** 読み込んだファイルのグリッド。state には入れない（大きすぎるので保存もしない） */
 let loadedGrid = null;
@@ -1083,6 +1284,7 @@ function build(st) {
     // 読み込み前は空のグリッドを返す。描画側は「まだ無い」として扱える
     return loadedGrid || makeGrid(1, 1, 1, st);
   }
+  if (st.mode === "building") return buildBuilding(st);
   const shape = SHAPES[st.shape] ? st.shape : "sphere";
   return SHAPES[shape].build(st);
 }
@@ -1434,6 +1636,36 @@ function computeWarnings(st, g) {
   const out = [];
   const total = countBlocks(g);
 
+  if (st.mode === "building") {
+    const d = buildingDims(st);
+    const wallH = d.fh - 1;                       // 床の上に立つ壁の高さ
+    const winH = clampInt(st.bWinH, 0, 16), sill = clampInt(st.bWinSill, 0, 16);
+    if (winH > 0 && sill + winH > wallH) {
+      out.push({
+        level: "warn",
+        msg: "窓が階高に収まらないので、高さ " + Math.max(0, wallH - sill) + " ブロックに切り詰めました" +
+          "（壁の高さ " + wallH + " ブロック）。階高を上げるか、窓の下端を下げてください。",
+      });
+    }
+    if (clampInt(st.bDoorH, 2, 8) > wallH) {
+      out.push({ level: "warn", msg: "玄関が階高に収まらないので、高さ " + wallH + " ブロックに切り詰めました。" });
+    }
+    if (clampInt(st.bWinW, 0, 16) > 0 && !windowRuns(d.w, clampInt(st.bWinW, 0, 16), clampInt(st.bWinGap, 1, 16)).length) {
+      out.push({ level: "info", msg: "壁が短くて窓が入らないため、窓は作られていません。" });
+    }
+    if (d.scale !== 1) {
+      out.push({
+        level: "info",
+        msg: "1 ブロック = " + d.scale + "m で換算しています（" + state.bWidth + "m → " + d.w + " ブロック）。" +
+          "端数は四捨五入します。",
+      });
+    }
+    if (total > 20000) {
+      out.push({ level: "warn", msg: "総ブロック数が " + total.toLocaleString() + " です。コマンド出力がかなり長くなります。" });
+    }
+    return out;
+  }
+
   if (st.mode !== "shape") {
     // 読み込んだ図面には、形状のパラメータに関する警告は当てはまらない
     if (total > 20000) {
@@ -1771,9 +2003,61 @@ function renderMode() {
   }
   $("#mode-shape").hidden = state.mode !== "shape";
   $("#mode-import").hidden = state.mode !== "import";
+  $("#mode-building").hidden = state.mode !== "building";
   // 寸法とブロックの指定は、形から作るときだけ意味がある
   $("#fs-params").hidden = state.mode !== "shape";
   $("#fs-blocks").hidden = state.mode !== "shape";
+}
+
+function renderBuilding() {
+  if (state.mode !== "building") return;
+
+  const params = $("#building-params");
+  params.textContent = "";
+  params.appendChild(numberGrid(BUILDING_FIELDS, () => { renderBuildingInfo(); renderOutputs(); }));
+
+  const fillSelect = (sel, options, key) => {
+    sel.textContent = "";
+    for (const [v, label] of Object.entries(options)) {
+      sel.appendChild(h("option", { value: v, selected: state[key] === v, text: label }));
+    }
+    sel.onchange = () => { state[key] = sel.value; renderBuildingInfo(); renderOutputs(); };
+  };
+  fillSelect($("#f-bRoof"), ROOF_KINDS, "bRoof");
+  fillSelect($("#f-bDoorSide"), DOOR_SIDES, "bDoorSide");
+
+  const blocks = $("#building-blocks");
+  blocks.textContent = "";
+  for (const [key, label] of [["bWallBlock", "壁"], ["bFloorBlock", "床・基礎"],
+                              ["bGlassBlock", "窓"], ["bRoofBlock", "屋根（階段以外）"],
+                              ["stairBlock", "屋根の階段"]]) {
+    blocks.appendChild(h("div", { class: "field" }, [
+      h("label", { for: "bf-" + key, text: label }),
+      h("input", {
+        type: "text", id: "bf-" + key, value: state[key],
+        oninput: (e) => { state[key] = e.target.value; renderOutputs(); },
+      }),
+    ]));
+  }
+  renderBuildingInfo();
+}
+
+/** メートル → ブロックの換算結果を出す。端数の丸めがどう効いたかが分かるように */
+function renderBuildingInfo() {
+  const wrap = $("#building-info");
+  if (!wrap) return;
+  wrap.textContent = "";
+  const d = buildingDims(state);
+  const line = (m, blocks) => m + "m ÷ " + d.scale + " = " + blocks + " ブロック";
+  const row = (k, v) => [h("dt", { text: k }), h("dd", { text: v })];
+  wrap.appendChild(h("div", { class: "import-info" }, [
+    h("dl", {}, [
+      ...row("幅", line(state.bWidth, d.w)),
+      ...row("奥行き", line(state.bDepth, d.d)),
+      ...row("階高", line(state.bFloorHeight, d.fh)),
+      ...row("本体の高さ", d.fh + " × " + d.floors + " 階 = " + d.bodyH + " ブロック"),
+    ]),
+  ]));
 }
 
 function renderImportInfo() {
@@ -1804,27 +2088,37 @@ function syncElevMode() {
   if (sel) sel.value = elevMode;
 }
 
+/** 数値の入力欄をまとめて作る。int は整数、num は小数を許す */
+function numberGrid(keys, onChange) {
+  const grid = h("div", { class: "grid2" });
+  for (const key of keys) {
+    const f = FIELDS[key];
+    const input = h("input", {
+      type: "number", min: f.min, max: f.max, step: f.step || 1, value: state[key], id: "f-" + key,
+      oninput: (e) => {
+        if (f.type === "num") {
+          const v = Number(e.target.value);
+          state[key] = isFinite(v) ? Math.max(f.min, Math.min(f.max, v)) : f.min;
+        } else {
+          state[key] = clampInt(e.target.value, f.min, f.max);
+        }
+        (onChange || renderOutputs)();
+      },
+    });
+    grid.appendChild(h("div", { class: "field" }, [h("label", { for: "f-" + key, text: f.label }), input]));
+  }
+  return grid;
+}
+
 function renderParams() {
   const wrap = $("#params");
   wrap.textContent = "";
   const def = SHAPES[state.shape];
   const shown = def.fields.filter((k) => !FIELDS[k].showIf || FIELDS[k].showIf(state));
-  const nums = shown.filter((k) => FIELDS[k].type === "int");
+  const nums = shown.filter((k) => FIELDS[k].type === "int" || FIELDS[k].type === "num");
   const bools = shown.filter((k) => FIELDS[k].type === "bool");
 
-  const grid = h("div", { class: "grid2" });
-  for (const key of nums) {
-    const f = FIELDS[key];
-    const input = h("input", {
-      type: "number", min: f.min, max: f.max, value: state[key], id: "f-" + key,
-      oninput: (e) => {
-        state[key] = clampInt(e.target.value, f.min, f.max);
-        renderOutputs();
-      },
-    });
-    grid.appendChild(h("div", { class: "field" }, [h("label", { for: "f-" + key, text: f.label }), input]));
-  }
-  wrap.appendChild(grid);
+  wrap.appendChild(numberGrid(nums));
 
   for (const key of bools) {
     const f = FIELDS[key];
@@ -2313,6 +2607,7 @@ function renderAll() {
   renderShapes();
   renderParams();
   renderBlocks();
+  renderBuilding();
   renderImportInfo();
   renderOutputs();
 }
@@ -2967,6 +3262,109 @@ function runSelfTest() {
   ok("読み込んだ図面の setblock はブロック状態付き", (() => {
     const cmd = buildCommands(defaultState(), fixGrid("nbt"));
     return /minecraft:hopper\[facing=north\]/.test(cmd) && /minecraft:oak_stairs\[facing=east\]/.test(cmd);
+  })());
+
+
+  // --- 16. 実際の建物 ---
+  const bSt = st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 2, bScale: 1,
+                   bWall: 1, bRoof: "gable", bWinW: 2, bWinH: 2, bWinGap: 2, bWinSill: 1,
+                   bDoorSide: "south", bDoorW: 1, bDoorH: 2 });
+  const bG = buildBuilding(bSt);
+
+  ok("メートルがブロックに換算される", (() => {
+    const d = buildingDims(bSt);
+    return d.w === 9 && d.d === 7 && d.fh === 3 && d.bodyH === 6;
+  })());
+  ok("スケールを変えるとブロック数が変わる", (() => {
+    const half = buildingDims(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bScale: 0.5 }));
+    return half.w === 18 && half.d === 14 && half.fh === 6;
+  })());
+  ok("換算は 1 ブロックを下回らない",
+    buildingDims(st({ mode: "building", bWidth: 0.2, bDepth: 0.2, bScale: 5 })).w === 1);
+
+  ok("建物の平面の大きさが換算どおり", bG.sx === 9 && bG.sz === 7);
+  ok("階数ぶんの床がある", (() => {
+    // 1 階と 2 階の床は全面が埋まっている
+    for (const y of [0, 3]) {
+      for (let z = 0; z < bG.sz; z++) for (let x = 0; x < bG.sx; x++) if (!gGet(bG, x, y, z)) return false;
+    }
+    return true;
+  })());
+  ok("壁が閉じている（外周が途切れない）", (() => {
+    // 玄関のある面と高さを避けて、外周が全部埋まっているか見る
+    for (const y of [4, 5]) {                    // 2 階の壁（玄関は 1 階）
+      for (let x = 0; x < bG.sx; x++) if (!gGet(bG, x, y, 0) || !gGet(bG, x, y, bG.sz - 1)) return false;
+      for (let z = 0; z < bG.sz; z++) if (!gGet(bG, 0, y, z) || !gGet(bG, bG.sx - 1, y, z)) return false;
+    }
+    return true;
+  })());
+  ok("内側は空洞（床と壁だけ）", gGet(bG, 4, 2, 3) === K.EMPTY && gGet(bG, 4, 5, 3) === K.EMPTY);
+  ok("窓は壁を貫通せずガラスで塞がれる", (() => {
+    const ids = new Set();
+    for (let y = 0; y < bG.sy; y++) {
+      for (let x = 0; x < bG.sx; x++) {
+        const e = gBlock(bG, x, y, 0);
+        if (e.kind !== K.EMPTY) ids.add(e.id);
+      }
+    }
+    // 北面にガラスがあり、かつ穴（空気）は玄関側だけなので北面には無い
+    if (!ids.has("minecraft:glass")) return false;
+    for (let y = 1; y < 3; y++) for (let x = 0; x < bG.sx; x++) if (!gGet(bG, x, y, 0)) return false;
+    return true;
+  })());
+  ok("玄関が指定した面に開く", (() => {
+    const x = Math.floor((bG.sx - 1) / 2);
+    return gGet(bG, x, 1, bG.sz - 1) === K.EMPTY && gGet(bG, x, 2, bG.sz - 1) === K.EMPTY &&
+      gGet(bG, x, 3, bG.sz - 1) !== K.EMPTY;
+  })());
+  ok("玄関の向きを変えると開く面が変わる", (() => {
+    const west = buildBuilding(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1,
+                                    bScale: 1, bDoorSide: "west", bDoorW: 1, bDoorH: 2, bWinW: 0 }));
+    const z = Math.floor((west.sz - 1) / 2);
+    return gGet(west, 0, 1, z) === K.EMPTY && gGet(west, west.sx - 1, 1, z) !== K.EMPTY;
+  })());
+  ok("屋根が本体の上に乗る", (() => {
+    const d = buildingDims(bSt);
+    return bG.sy > d.bodyH && countLayer(bG, d.bodyH) > 0 && countKind(bG, K.STAIR) > 0;
+  })());
+  ok("陸屋根は 1 段で平ら", (() => {
+    const flat = buildBuilding(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1,
+                                    bScale: 1, bRoof: "flat" }));
+    const d = buildingDims(st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1, bScale: 1 }));
+    return flat.sy === d.bodyH + 1 && countLayer(flat, flat.sy - 1) === flat.sx * flat.sz;
+  })());
+  ok("寄棟屋根も選べる", (() => {
+    const hip = buildBuilding(st({ mode: "building", bWidth: 11, bDepth: 11, bFloorHeight: 3, bFloors: 1,
+                                   bScale: 1, bRoof: "hip" }));
+    return countKind(hip, K.CORNER) > 0;
+  })());
+  ok("建物は複数のブロックを使う", (() => {
+    const ids = new Set(buildMaterials(bG).items.map((i) => i.id));
+    return ids.has("minecraft:oak_planks") && ids.has("minecraft:stone_bricks") && ids.has("minecraft:glass");
+  })());
+  ok("窓の開口は等間隔で、両端に壁が残る", (() => {
+    const runs = windowRuns(11, 2, 2);
+    if (!runs.length) return false;
+    if (runs[0][0] < 1 || runs[runs.length - 1][1] > 9) return false;
+    for (let i = 1; i < runs.length; i++) if (runs[i][0] - runs[i - 1][1] - 1 !== 2) return false;
+    return true;
+  })());
+  ok("窓が入らない幅では開口を作らない", windowRuns(3, 2, 2).length === 0 && windowRuns(9, 0, 2).length === 0);
+  ok("建物の source は building", bG.source === "building");
+  ok("窓が階高に収まらないときは警告が出る", (() => {
+    const tall = st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 3, bFloors: 1, bScale: 1,
+                      bWinW: 2, bWinH: 5, bWinSill: 1 });
+    return computeWarnings(tall, buildBuilding(tall)).some((w) => /窓が階高に収まらない/.test(w.msg));
+  })());
+  ok("収まる窓では警告が出ない", (() => {
+    const fit = st({ mode: "building", bWidth: 9, bDepth: 7, bFloorHeight: 5, bFloors: 1, bScale: 1,
+                     bWinW: 2, bWinH: 2, bWinSill: 1 });
+    return !computeWarnings(fit, buildBuilding(fit)).some((w) => /収まらない/.test(w.msg));
+  })());
+  ok("屋根の移し替えでパレットが混ざらない", (() => {
+    // blitGrid が屋根のブロックを、こちらのパレットに正しく登録できているか
+    const ids = new Set(bG.palette.slice(1).map((e) => e.id));
+    return ids.has("minecraft:dark_oak_planks") || ids.has("minecraft:oak_stairs");
   })());
 
   // --- 結果表示 ---
