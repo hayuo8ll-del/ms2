@@ -101,3 +101,12 @@ GitHub Pages はワークフローからデプロイしています。初回だ�
 **Settings > Pages > Build and deployment > Source** を **GitHub Actions** に変更してください。
 
 以降は `main` の `app/` に変更が入るたびに自動でデプロイされます。
+
+> **この設定を忘れると、CI は緑なのにサイトだけ 404 になります。**
+> `actions/deploy-pages` は Source が未設定でもデプロイを作成して成功を報告するためです
+> （症状は「There isn't a GitHub Pages site here.」）。
+> これを見逃さないよう、デプロイ後に公開 URL を実際に取得して
+> ステータスと `<title>` を確かめるステップを入れてあります。配信されていなければ CI が落ちます。
+>
+> なお `actions/configure-pages` の `enablement: true` でこの設定を自動化することもできますが、
+> `GITHUB_TOKEN` では動かず PAT か GitHub App のトークンが要るため、採用していません。

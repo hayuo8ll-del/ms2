@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "app/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -71,3 +72,32 @@ jobs:
 
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      # deploy-pages は、Settings > Pages の Source が GitHub Actions に
+      # なっていなくてもデプロイを作成して成功を報告する。その状態だと
+      # 「CI は緑なのにサイトは 404」になるので、実際に取得して確かめる。
+      # ステータスだけでなく <title> まで見る（配信されていない場合でも
+      # 200 が返る経路があるため）。
+      - name: 配信されているか確認
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          base="${PAGE_URL%/}"
+          check() {
+            url="$1"
+            want="$2"
+            code=""
+            for i in 1 2 3 4 5; do
+              code=$(curl -sSL -o /tmp/page.html -w '%{http_code}' --max-time 20 "$url") || code="000"
+              if [ "$code" = "200" ] && grep -q "$want" /tmp/page.html; then
+                echo "OK  $url"
+                return 0
+              fi
+              echo "$url は HTTP $code（$i 回目）。10 秒待って再試行します"
+              sleep 10
+            done
+            echo "::error::$url を配信できていません（最後の HTTP $code）。Settings > Pages > Build and deployment > Source が GitHub Actions になっているか確認してください"
+            return 1
+          }
+          check "$base/" "<title>Claude Code 設定ジェネレータ</title>"
+          check "$base/minecraft/" "<title>マイクラ建築図面ジェネレータ</title>"
