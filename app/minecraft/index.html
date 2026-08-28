@@ -149,6 +149,33 @@ fieldset {
 }
 legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
 
+/* ---------- 入力モード ---------- */
+.modes { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.modes button {
+  flex: 1 1 auto; padding: 7px 10px; font-size: 13px; background: var(--panel-2);
+  border-radius: var(--radius); color: var(--muted);
+}
+.modes button[aria-selected="true"] {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+
+.drop {
+  border: 2px dashed var(--line); border-radius: var(--radius);
+  padding: 22px 16px; text-align: center; cursor: pointer; background: var(--panel);
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px;
+}
+.drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.drop b { font-size: 13.5px; }
+.drop span { font-size: 12px; color: var(--muted); }
+.import-info {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 12.5px; margin-bottom: 14px;
+}
+.import-info dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+.import-info dt { color: var(--muted); }
+.import-info dd { margin: 0; }
+.import-info .file { font-weight: 600; word-break: break-all; margin-bottom: 6px; }
+
 /* ---------- 形状の選択 ---------- */
 .shapes { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin-bottom: 12px; }
 .shapes button {
@@ -202,6 +229,10 @@ canvas { display: block; max-width: 100%; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
 .legend .sw-box { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
 .readout { font-size: 12px; color: var(--muted); min-height: 1.7em; }
+.empty-hint {
+  background: var(--panel); border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px; margin: 0 0 14px;
+}
 .sec-head { font-size: 13px; font-weight: 600; margin: 16px 0 8px; display: flex; align-items: center; gap: 10px; }
 .sec-head select { padding: 2px 6px; font-size: 12px; }
 .stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); }
@@ -283,18 +314,39 @@ pre.code {
 <main>
   <!-- ================= 入力ペイン ================= -->
   <section class="pane form">
-    <h2>形状</h2>
-    <div class="shapes" id="shapes"></div>
-    <p class="shape-desc" id="shape-desc"></p>
+    <div class="modes" id="modes" role="tablist">
+      <button data-mode="shape" role="tab" aria-selected="true">形から作る</button>
+      <button data-mode="import" role="tab" aria-selected="false">ファイルを読む</button>
+    </div>
+
+    <div class="mode-panel" id="mode-shape">
+      <h2>形状</h2>
+      <div class="shapes" id="shapes"></div>
+      <p class="shape-desc" id="shape-desc"></p>
+    </div>
+
+    <div class="mode-panel" id="mode-import" hidden>
+      <h2>公開されている建築・トラップを読む</h2>
+      <p class="shape-desc">
+        配布サイトから落とした <code>.litematic</code> / <code>.schem</code> / <code>.nbt</code> を
+        そのまま図面と材料表にします。ファイルはブラウザの中だけで読み、どこにも送信しません。
+      </p>
+      <div class="drop" id="drop" tabindex="0" role="button">
+        <b>ここにファイルをドロップ</b>
+        <span>またはクリックして選ぶ（.litematic / .schem / .nbt）</span>
+      </div>
+      <input type="file" id="file-schem" accept=".litematic,.schem,.schematic,.nbt" hidden>
+      <div id="import-info"></div>
+    </div>
 
     <div class="warnings" id="warnings"></div>
 
-    <fieldset>
+    <fieldset id="fs-params">
       <legend>寸法</legend>
       <div id="params"></div>
     </fieldset>
 
-    <fieldset>
+    <fieldset id="fs-blocks">
       <legend>コマンド出力に使うブロック</legend>
       <div id="blocks"></div>
     </fieldset>
@@ -311,6 +363,9 @@ pre.code {
     </div>
 
     <div class="tabpanel active" id="tab-plan">
+      <p class="empty-hint" id="empty-hint" hidden>
+        まだ何も読み込んでいません。左の枠にファイルをドロップすると、ここに図面が出ます。
+      </p>
       <div class="planbar">
         <button class="mini" id="btn-prev" title="下の段へ（←）">◀</button>
         <input type="range" id="layer" min="0" max="0" value="0" aria-label="レイヤー">
@@ -406,6 +461,7 @@ const MAX_SIDE = 128;  // 幅・奥行きの上限
 
 function defaultState() {
   return {
+    mode: "shape",          // "shape" = 形から作る / "import" = ファイルを読む
     shape: "sphere",
     // 半径系
     rx: 9, ry: 9, rz: 9,
@@ -1018,18 +1074,376 @@ function buildArch(st) {
 }
 
 /** state から図面を作る。ここが唯一の入口 */
+/** 読み込んだファイルのグリッド。state には入れない（大きすぎるので保存もしない） */
+let loadedGrid = null;
+let importError = "";
+
 function build(st) {
+  if (st.mode === "import") {
+    // 読み込み前は空のグリッドを返す。描画側は「まだ無い」として扱える
+    return loadedGrid || makeGrid(1, 1, 1, st);
+  }
   const shape = SHAPES[st.shape] ? st.shape : "sphere";
   return SHAPES[shape].build(st);
 }
 
 /* ------------------------------------------------------------------
-   6. 警告（ガイドと同じく、その場で気づけるものだけ出す）
+   6. スケマティック読み込み（NBT）
+
+   配布されている建築やトラップのファイルを、そのまま図面にする。
+   ブラウザの中だけで解析するので、ファイルはどこにも送られない。
+
+   対応するのは次の 3 系統。どれも中身は gzip 圧縮された NBT。
+     .nbt       ストラクチャーブロック（size / palette / blocks）
+     .schem     Sponge v2 / v3（Palette + BlockData の varint 列）
+     .litematic Litematica（BlockStatePalette + long のビットパック）
+   ------------------------------------------------------------------ */
+
+const TAG = {
+  END: 0, BYTE: 1, SHORT: 2, INT: 3, LONG: 4, FLOAT: 5, DOUBLE: 6,
+  BYTE_ARRAY: 7, STRING: 8, LIST: 9, COMPOUND: 10, INT_ARRAY: 11, LONG_ARRAY: 12,
+};
+
+/** NBT を素の JS の値にする。compound はオブジェクト、long は BigInt */
+function parseNBT(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dec = new TextDecoder("utf-8");
+  let pos = 0;
+
+  const need = (n) => {
+    if (pos + n > bytes.length) throw new Error("NBT の途中でデータが尽きました");
+  };
+  const u8 = () => { need(1); return dv.getUint8(pos++); };
+  const i8 = () => { need(1); const v = dv.getInt8(pos); pos += 1; return v; };
+  const i16 = () => { need(2); const v = dv.getInt16(pos); pos += 2; return v; };
+  const u16 = () => { need(2); const v = dv.getUint16(pos); pos += 2; return v; };
+  const i32 = () => { need(4); const v = dv.getInt32(pos); pos += 4; return v; };
+  const i64 = () => { need(8); const v = dv.getBigInt64(pos); pos += 8; return v; };
+  const f32 = () => { need(4); const v = dv.getFloat32(pos); pos += 4; return v; };
+  const f64 = () => { need(8); const v = dv.getFloat64(pos); pos += 8; return v; };
+  const str = () => {
+    const n = u16();
+    need(n);
+    const v = dec.decode(bytes.subarray(pos, pos + n));
+    pos += n;
+    return v;
+  };
+
+  function payload(type) {
+    switch (type) {
+      case TAG.BYTE: return i8();
+      case TAG.SHORT: return i16();
+      case TAG.INT: return i32();
+      case TAG.LONG: return i64();
+      case TAG.FLOAT: return f32();
+      case TAG.DOUBLE: return f64();
+      case TAG.BYTE_ARRAY: {
+        const n = i32(); need(n);
+        const v = new Int8Array(bytes.buffer.slice(bytes.byteOffset + pos, bytes.byteOffset + pos + n));
+        pos += n;
+        return v;
+      }
+      case TAG.STRING: return str();
+      case TAG.LIST: {
+        const t = u8(), n = i32();
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(payload(t));
+        return out;
+      }
+      case TAG.COMPOUND: {
+        const out = {};
+        for (;;) {
+          const t = u8();
+          if (t === TAG.END) break;
+          const name = str();
+          out[name] = payload(t);
+        }
+        return out;
+      }
+      case TAG.INT_ARRAY: {
+        const n = i32();
+        const out = new Int32Array(n);
+        for (let i = 0; i < n; i++) out[i] = i32();
+        return out;
+      }
+      case TAG.LONG_ARRAY: {
+        const n = i32();
+        const out = new BigInt64Array(n);
+        for (let i = 0; i < n; i++) out[i] = i64();
+        return out;
+      }
+      default: throw new Error("知らない NBT タグ: " + type);
+    }
+  }
+
+  const type = u8();
+  if (type !== TAG.COMPOUND) throw new Error("NBT のルートが compound ではありません");
+  str();                       // ルートの名前。使わない
+  return payload(TAG.COMPOUND);
+}
+
+const isGzip = (b) => b.length > 2 && b[0] === 0x1f && b[1] === 0x8b;
+
+async function gunzip(bytes) {
+  if (typeof DecompressionStream !== "function") throw new Error("このブラウザは gzip 展開に対応していません");
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+const AIR_IDS = new Set(["minecraft:air", "minecraft:cave_air", "minecraft:void_air", "air", "cave_air", "void_air"]);
+
+/** "minecraft:oak_stairs[facing=east,half=bottom]" を { id, props } に割る */
+function parseBlockState(str) {
+  const m = /^([^\[]+)(?:\[(.*)\])?$/.exec(String(str).trim());
+  if (!m) return { id: String(str), props: {} };
+  const id = m[1].includes(":") ? m[1] : "minecraft:" + m[1];
+  const props = {};
+  if (m[2]) {
+    for (const kv of m[2].split(",")) {
+      const i = kv.indexOf("=");
+      if (i > 0) props[kv.slice(0, i).trim()] = kv.slice(i + 1).trim();
+    }
+  }
+  return { id, props };
+}
+
+const FACING_DIR = { north: DIR.NORTH, east: DIR.EAST, south: DIR.SOUTH, west: DIR.WEST };
+
+/** 読み込んだブロックの、図面上の意味づけ */
+function entryFromBlock(id, props) {
+  const p = props || {};
+  const dir = FACING_DIR[p.facing] || DIR.NONE;
+  const kind = /_stairs$/.test(id) ? K.STAIR : K.BLOCK;
+  const e = { id, props: p, kind, dir };
+  if (p.facing === "up" || p.facing === "down") e.vert = p.facing;
+  return e;
+}
+
+/**
+ * 読み込み結果を共通のグリッドにする。
+ * entries は { id, props } の配列、idxAt(x,y,z) はそのパレット添字を返す関数。
+ */
+function importedGrid(sx, sy, sz, entries, idxAt, title) {
+  const g = makeGrid(sx, sy, sz, null);
+  g.source = "import";
+  g.title = title;
+
+  // 読み込んだパレットを、こちらのパレットに移し替える（空気は 0 に潰す）
+  const map = new Int32Array(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    map[i] = AIR_IDS.has(e.id) ? 0 : paletteIndex(g, entryFromBlock(e.id, e.props));
+  }
+  for (let y = 0; y < sy; y++) {
+    const layer = g.layers[y];
+    for (let z = 0; z < sz; z++) {
+      for (let x = 0; x < sx; x++) {
+        const raw = idxAt(x, y, z);
+        layer[z * sx + x] = raw >= 0 && raw < map.length ? map[raw] : 0;
+      }
+    }
+  }
+  return g;
+}
+
+/* ---------- ストラクチャーブロック（.nbt） ---------- */
+
+function fromStructureNbt(root) {
+  const size = root.size;
+  if (!size || size.length < 3) throw new Error("size がありません");
+  const [sx, sy, sz] = [Number(size[0]), Number(size[1]), Number(size[2])];
+  const entries = (root.palette || []).map((e) => ({
+    id: normalizeId(e.Name), props: strProps(e.Properties),
+  }));
+
+  // blocks は「置かれているところだけ」の一覧。埋まっていないところは空気
+  const idx = new Int32Array(sx * sy * sz).fill(-1);
+  for (const b of root.blocks || []) {
+    const [x, y, z] = [Number(b.pos[0]), Number(b.pos[1]), Number(b.pos[2])];
+    if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) continue;
+    idx[(y * sz + z) * sx + x] = Number(b.state);
+  }
+  return importedGrid(sx, sy, sz, entries, (x, y, z) => idx[(y * sz + z) * sx + x], null);
+}
+
+/* ---------- Sponge スケマティック（.schem） ---------- */
+
+/** BlockData は 1 ブロック 1 varint（LEB128）の並び */
+function readVarints(arr, count) {
+  const out = new Int32Array(count);
+  let pos = 0;
+  for (let i = 0; i < count; i++) {
+    let value = 0, shift = 0;
+    for (;;) {
+      if (pos >= arr.length) throw new Error("BlockData が途中で終わっています");
+      const b = arr[pos++] & 0xff;
+      value |= (b & 0x7f) << shift;
+      if ((b & 0x80) === 0) break;
+      shift += 7;
+      if (shift > 35) throw new Error("varint が長すぎます");
+    }
+    out[i] = value;
+  }
+  return out;
+}
+
+function fromSponge(root) {
+  // v3 は Schematic の下に、v2 はルート直下に入っている
+  const sch = root.Schematic || root;
+  const blocks = sch.Blocks || sch;
+  const palette = blocks.Palette || sch.Palette;
+  const data = blocks.Data || sch.BlockData;
+  const sx = Number(sch.Width), sy = Number(sch.Height), sz = Number(sch.Length);
+  if (!palette || !data || !sx || !sy || !sz) throw new Error("Sponge スケマティックの中身が足りません");
+
+  // Palette は { "minecraft:stone[...]": 添字 } の向き。配列に直す
+  const entries = [];
+  for (const [name, i] of Object.entries(palette)) {
+    entries[Number(i)] = parseBlockState(name);
+  }
+  for (let i = 0; i < entries.length; i++) if (!entries[i]) entries[i] = { id: "minecraft:air", props: {} };
+
+  const idx = readVarints(data, sx * sy * sz);
+  return importedGrid(sx, sy, sz, entries, (x, y, z) => idx[(y * sz + z) * sx + x], null);
+}
+
+/* ---------- Litematica（.litematic） ---------- */
+
+/**
+ * BlockStates は long の並びにビット幅 bits で詰められている。
+ * 1 個の値が long の境界をまたぐことがあるので、またぐ場合は 2 本から組み立てる。
+ */
+function litematicaReader(longs, bits) {
+  const mask = (1n << BigInt(bits)) - 1n;
+  const u64 = (v) => BigInt.asUintN(64, v);
+  return (i) => {
+    const start = i * bits;
+    const a = start >>> 6;
+    const b = ((i + 1) * bits - 1) >>> 6;
+    const off = BigInt(start & 63);
+    if (a >= longs.length) return 0;
+    if (a === b) return Number((u64(longs[a]) >> off) & mask);
+    if (b >= longs.length) return Number((u64(longs[a]) >> off) & mask);
+    const rest = 64n - off;
+    return Number(((u64(longs[a]) >> off) | (u64(longs[b]) << rest)) & mask);
+  };
+}
+
+function fromLitematic(root) {
+  const regions = root.Regions;
+  if (!regions || !Object.keys(regions).length) throw new Error("Regions がありません");
+
+  // 各領域の位置と大きさから、全体を囲む箱を出す
+  const boxes = [];
+  for (const [name, r] of Object.entries(regions)) {
+    const pos = r.Position || { x: 0, y: 0, z: 0 };
+    const size = r.Size || { x: 0, y: 0, z: 0 };
+    const sx = Math.abs(Number(size.x)), sy = Math.abs(Number(size.y)), sz = Math.abs(Number(size.z));
+    // 負の Size は逆向きに伸びているという意味。原点をずらして正規化する
+    const ox = Number(size.x) < 0 ? Number(pos.x) - sx + 1 : Number(pos.x);
+    const oy = Number(size.y) < 0 ? Number(pos.y) - sy + 1 : Number(pos.y);
+    const oz = Number(size.z) < 0 ? Number(pos.z) - sz + 1 : Number(pos.z);
+    if (!sx || !sy || !sz) continue;
+    boxes.push({ name, r, ox, oy, oz, sx, sy, sz });
+  }
+  if (!boxes.length) throw new Error("中身のある領域がありません");
+
+  const minX = Math.min(...boxes.map((b) => b.ox));
+  const minY = Math.min(...boxes.map((b) => b.oy));
+  const minZ = Math.min(...boxes.map((b) => b.oz));
+  const sx = Math.max(...boxes.map((b) => b.ox + b.sx)) - minX;
+  const sy = Math.max(...boxes.map((b) => b.oy + b.sy)) - minY;
+  const sz = Math.max(...boxes.map((b) => b.oz + b.sz)) - minZ;
+
+  // 領域ごとにパレットが違うので、1 本につなげてから添字をずらす
+  const entries = [];
+  const cells = new Int32Array(sx * sy * sz).fill(-1);
+  for (const b of boxes) {
+    const pal = b.r.BlockStatePalette || [];
+    const base = entries.length;
+    for (const e of pal) entries.push({ id: normalizeId(e.Name), props: strProps(e.Properties) });
+
+    const longs = b.r.BlockStates;
+    if (!longs || !longs.length) continue;
+    const bits = Math.max(2, Math.ceil(Math.log2(Math.max(pal.length, 1))));
+    const read = litematicaReader(longs, bits);
+    for (let y = 0; y < b.sy; y++) {
+      for (let z = 0; z < b.sz; z++) {
+        for (let x = 0; x < b.sx; x++) {
+          const v = read((y * b.sz + z) * b.sx + x);
+          const gx = b.ox - minX + x, gy = b.oy - minY + y, gz = b.oz - minZ + z;
+          cells[(gy * sz + gz) * sx + gx] = base + v;
+        }
+      }
+    }
+  }
+  const title = root.Metadata && root.Metadata.Name ? String(root.Metadata.Name) : null;
+  return importedGrid(sx, sy, sz, entries, (x, y, z) => cells[(y * sz + z) * sx + x], title);
+}
+
+/* ---------- 入口 ---------- */
+
+function normalizeId(name) {
+  const n = String(name || "minecraft:air");
+  return n.includes(":") ? n : "minecraft:" + n;
+}
+
+/** NBT の Properties は値が文字列とは限らないので揃える */
+function strProps(props) {
+  const out = {};
+  for (const [k, v] of Object.entries(props || {})) out[k] = String(v);
+  return out;
+}
+
+const MAX_IMPORT_SIDE = 512;
+const MAX_IMPORT_VOXELS = 8000000;
+
+function detectAndParse(root) {
+  if (root.Regions) return fromLitematic(root);
+  if (root.Schematic || (root.BlockData && root.Palette)) return fromSponge(root);
+  if (root.blocks && root.palette && root.size) return fromStructureNbt(root);
+  throw new Error("知らない形式です（.litematic / .schem / .nbt に対応しています）");
+}
+
+/** ファイル 1 つを読んでグリッドにする。失敗は例外で返す */
+async function readSchematic(file) {
+  const raw = new Uint8Array(await file.arrayBuffer());
+  const bytes = isGzip(raw) ? await gunzip(raw) : raw;
+  const root = parseNBT(bytes);
+  const g = detectAndParse(root);
+
+  if (Math.max(g.sx, g.sy, g.sz) > MAX_IMPORT_SIDE) {
+    throw new Error("大きすぎます（" + g.sx + "×" + g.sz + "×" + g.sy + "）。一辺 " + MAX_IMPORT_SIDE + " まで");
+  }
+  if (g.sx * g.sy * g.sz > MAX_IMPORT_VOXELS) {
+    throw new Error("大きすぎます（" + (g.sx * g.sy * g.sz).toLocaleString() + " マス）。" +
+      MAX_IMPORT_VOXELS.toLocaleString() + " マスまで");
+  }
+  if (!countBlocks(g)) throw new Error("空気だけで、ブロックがありません");
+
+  if (!g.title) g.title = file.name;
+  g.fileName = file.name;
+  return g;
+}
+
+/* ------------------------------------------------------------------
+   7. 警告（ガイドと同じく、その場で気づけるものだけ出す）
    ------------------------------------------------------------------ */
 
 function computeWarnings(st, g) {
   const out = [];
   const total = countBlocks(g);
+
+  if (st.mode !== "shape") {
+    // 読み込んだ図面には、形状のパラメータに関する警告は当てはまらない
+    if (total > 20000) {
+      out.push({ level: "warn", msg: "総ブロック数が " + total.toLocaleString() + " です。コマンド出力がかなり長くなります。" });
+    }
+    if (Math.max(g.sx, g.sy, g.sz) > 96) {
+      out.push({ level: "warn", msg: "図面が大きいため、描画に時間がかかることがあります。" });
+    }
+    return out;
+  }
 
   if (st.shape === "spiral") {
     const steps = spiralSteps(st);
@@ -1086,7 +1500,7 @@ function recommendSteps(st) {
 }
 
 /* ------------------------------------------------------------------
-   7. テキスト・コマンド出力（グリッド → 文字列の純粋関数）
+   8. テキスト・コマンド出力（グリッド → 文字列の純粋関数）
    ------------------------------------------------------------------ */
 
 function shapeSummary(st) {
@@ -1283,7 +1697,7 @@ function buildCommands(st, g) {
 }
 
 /* ------------------------------------------------------------------
-   8. DOM ヘルパー
+   9. DOM ヘルパー
    ------------------------------------------------------------------ */
 
 const $ = (sel) => document.querySelector(sel);
@@ -1334,7 +1748,7 @@ async function copyText(text, label) {
 }
 
 /* ------------------------------------------------------------------
-   9. フォームの描画
+   10. フォームの描画
    ------------------------------------------------------------------ */
 
 function renderShapes() {
@@ -1349,6 +1763,38 @@ function renderShapes() {
     }));
   }
   $("#shape-desc").textContent = SHAPES[state.shape].desc;
+}
+
+function renderMode() {
+  for (const b of document.querySelectorAll("#modes button")) {
+    b.setAttribute("aria-selected", String(b.dataset.mode === state.mode));
+  }
+  $("#mode-shape").hidden = state.mode !== "shape";
+  $("#mode-import").hidden = state.mode !== "import";
+  // 寸法とブロックの指定は、形から作るときだけ意味がある
+  $("#fs-params").hidden = state.mode !== "shape";
+  $("#fs-blocks").hidden = state.mode !== "shape";
+}
+
+function renderImportInfo() {
+  const wrap = $("#import-info");
+  wrap.textContent = "";
+  if (importError) {
+    wrap.appendChild(h("div", { class: "warning warn", text: importError }));
+    return;
+  }
+  if (!loadedGrid) return;
+  const g = loadedGrid;
+  const mats = buildMaterials(g);
+  const row = (k, v) => [h("dt", { text: k }), h("dd", { text: v })];
+  wrap.appendChild(h("div", { class: "import-info" }, [
+    h("div", { class: "file", text: g.fileName || g.title || "読み込み済み" }),
+    h("dl", {}, [
+      ...row("寸法", g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）"),
+      ...row("ブロック", countBlocks(g).toLocaleString() + " 個"),
+      ...row("種類", mats.items.length + " 種類"),
+    ]),
+  ]));
 }
 
 /** 形状ごとに見やすい立面図の見せ方が違うので、切り替え時に既定へ戻す */
@@ -1424,7 +1870,7 @@ function renderWarnings(warns) {
 }
 
 /* ------------------------------------------------------------------
-   10. 図面の描画
+   11. 図面の描画
    ------------------------------------------------------------------ */
 
 function kindColor(kind) {
@@ -1580,6 +2026,7 @@ function drawPlan(canvas, g, y, opts) {
       ctx.fillStyle = blockColor(e, g);
       ctx.fillRect(gutter + x * cell, gutter + z * cell, cell, cell);
       if (e.dir && cell >= 10) drawArrow(ctx, gutter + x * cell, gutter + z * cell, cell, e.dir);
+      else if (e.vert && cell >= 10) drawVert(ctx, gutter + x * cell, gutter + z * cell, cell, e.vert);
     }
   }
 
@@ -1613,6 +2060,21 @@ function drawArrow(ctx, px, py, cell, dir) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+/** facing=up / down は矢印で描けないので、丸で表す（● 下向き / ○ 上向き） */
+function drawVert(ctx, px, py, cell, vert) {
+  const r = cell * 0.22;
+  ctx.beginPath();
+  ctx.arc(px + cell / 2, py + cell / 2, r, 0, Math.PI * 2);
+  if (vert === "down") {
+    ctx.fillStyle = cssVar("--panel");
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = cssVar("--panel");
+    ctx.lineWidth = Math.max(1, cell * 0.09);
+    ctx.stroke();
+  }
 }
 
 function drawRulers(ctx, g, cell, gutter) {
@@ -1700,18 +2162,33 @@ function drawElevation(canvas, g, mode) {
 function renderLegend(g) {
   const wrap = $("#legend");
   wrap.textContent = "";
+
+  const add = (color, text) => wrap.appendChild(h("span", {}, [
+    h("span", { class: "sw-box", style: "background:" + color }),
+    h("span", { text }),
+  ]));
+
+  if (g.source !== "shape") {
+    // 読み込んだ建築は種類が多いので、多い順に上位だけ出す
+    const mats = buildMaterials(g);
+    for (const it of mats.items.slice(0, 12)) add(blockColor(it.entry, g), it.name + " ×" + it.count);
+    if (mats.items.length > 12) {
+      wrap.appendChild(h("span", { text: "ほか " + (mats.items.length - 12) + " 種類（材料タブに全部あります）" }));
+    }
+    if (countKind(g, K.STAIR) || mats.items.some((i) => i.entry.dir)) {
+      wrap.appendChild(h("span", { text: "▶ 矢印 = facing（向き）／● 下向き／○ 上向き" }));
+    }
+    add(cssVar("--ghost"), "一つ下の段");
+    return;
+  }
+
   const items = [{ c: "--cell", t: "ブロック" }];
   if (countKind(g, K.EDGE)) items.push({ c: "--cell-edge", t: "輪郭（外側に面しているブロック）" });
   if (countKind(g, K.STAIR)) items.push({ c: "--cell-stair", t: "階段ブロック（矢印＝上り方向＝facing）" });
   if (countKind(g, K.CORNER)) items.push({ c: "--cell-corner", t: "隅棟（コーナー）" });
   if (countKind(g, K.PILLAR)) items.push({ c: "--cell-pillar", t: "柱" });
   items.push({ c: "--ghost", t: "一つ下の段" });
-  for (const it of items) {
-    wrap.appendChild(h("span", {}, [
-      h("span", { class: "sw-box", style: "background:" + cssVar(it.c) }),
-      h("span", { text: it.t }),
-    ]));
-  }
+  for (const it of items) add(cssVar(it.c), it.t);
 }
 
 function renderMaterials(g) {
@@ -1787,7 +2264,7 @@ function renderSheet(g) {
 }
 
 /* ------------------------------------------------------------------
-   11. 全体の描き直し
+   12. 全体の描き直し
    ------------------------------------------------------------------ */
 
 let currentGrid = null;
@@ -1795,6 +2272,14 @@ let currentGrid = null;
 function renderOutputs() {
   const g = build(state);
   currentGrid = g;
+
+  // 読み込みモードでまだファイルが無いときは、図面ではなく案内を出す
+  const nothing = state.mode === "import" && !loadedGrid;
+  $("#empty-hint").hidden = !nothing;
+  for (const el of document.querySelectorAll("#tab-plan .planbar, #tab-plan .canvaswrap, #tab-plan .sec-head, #tab-plan .legend, #tab-plan .readout, #tab-plan .stats")) {
+    el.hidden = nothing;
+  }
+  if (nothing) { save(); return; }
   if (layerIndex >= g.sy) layerIndex = g.sy - 1;
   if (layerIndex < 0) layerIndex = 0;
 
@@ -1824,14 +2309,16 @@ function renderOutputs() {
 }
 
 function renderAll() {
+  renderMode();
   renderShapes();
   renderParams();
   renderBlocks();
+  renderImportInfo();
   renderOutputs();
 }
 
 /* ------------------------------------------------------------------
-   12. 保存・復元・URL
+   13. 保存・復元・URL
    ------------------------------------------------------------------ */
 
 function save() {
@@ -1878,7 +2365,7 @@ function shareUrl() {
 }
 
 /* ------------------------------------------------------------------
-   13. イベント
+   14. イベント
    ------------------------------------------------------------------ */
 
 function setTab(name) {
@@ -1890,6 +2377,25 @@ function setTab(name) {
     p.classList.toggle("active", p.id === "tab-" + name);
   }
   renderOutputs();
+}
+
+async function loadSchematic(file) {
+  importError = "";
+  state.mode = "import";
+  toast("読み込んでいます…");
+  try {
+    const g = await readSchematic(file);
+    loadedGrid = g;
+    layerIndex = 0;
+    elevMode = "project";           // 読み込んだ建築は投影のほうが形が分かる
+    const sel = $("#elev-mode");
+    if (sel) sel.value = elevMode;
+    toast(file.name + " を読み込みました");
+  } catch (e) {
+    loadedGrid = null;
+    importError = file.name + " を読めませんでした: " + (e && e.message ? e.message : String(e));
+  }
+  renderAll();
 }
 
 function moveLayer(delta) {
@@ -1922,14 +2428,56 @@ function initEvents() {
     const x = Math.floor((e.clientX - rect.left - gutter) / cell);
     const z = Math.floor((e.clientY - rect.top - gutter) / cell);
     if (x < 0 || z < 0 || x >= g.sx || z >= g.sz) { $("#readout").textContent = ""; return; }
-    const kind = gGet(g, x, layerIndex, z);
-    const dir = gDir(g, x, layerIndex, z);
-    const label = { 0: "空", 1: "ブロック", 2: "ブロック（輪郭）", 3: "階段", 4: "隅棟", 5: "柱" }[kind];
-    $("#readout").textContent =
-      "x=" + (x + g.labelX0) + "  z=" + (z + g.labelZ0) + "  " + (layerIndex + 1) + " 段目  —  " +
-      label + (kind === K.STAIR && DIR_NAME[dir] ? "（facing=" + DIR_NAME[dir] + "）" : "");
+    const blk = gBlock(g, x, layerIndex, z);
+    const where = "x=" + (x + g.labelX0) + "  z=" + (z + g.labelZ0) + "  " + (layerIndex + 1) + " 段目  —  ";
+    if (blk.kind === K.EMPTY) { $("#readout").textContent = where + "空"; return; }
+    if (g.source === "shape") {
+      const label = { 1: "ブロック", 2: "ブロック（輪郭）", 3: "階段", 4: "隅棟", 5: "柱" }[blk.kind] || "ブロック";
+      $("#readout").textContent = where + label +
+        (blk.kind === K.STAIR && DIR_NAME[blk.dir] ? "（facing=" + DIR_NAME[blk.dir] + "）" : "");
+    } else {
+      $("#readout").textContent = where + blockName(blk);
+    }
   });
   $("#plan").addEventListener("mouseleave", () => { $("#readout").textContent = ""; });
+
+  for (const b of document.querySelectorAll("#modes button")) {
+    b.addEventListener("click", () => {
+      state.mode = b.dataset.mode;
+      layerIndex = 0;
+      renderAll();
+    });
+  }
+
+  const drop = $("#drop");
+  const picker = $("#file-schem");
+  drop.addEventListener("click", () => picker.click());
+  drop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { picker.click(); e.preventDefault(); }
+  });
+  picker.addEventListener("change", () => {
+    if (picker.files && picker.files[0]) loadSchematic(picker.files[0]);
+    picker.value = "";
+  });
+  for (const ev of ["dragenter", "dragover"]) {
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });
+  }
+  for (const ev of ["dragleave", "drop"]) {
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); });
+  }
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadSchematic(f);
+  });
+  // ページのどこに落としても読み込めるようにする（ブラウザ既定の「開く」は止める）
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    e.preventDefault();
+    state.mode = "import";
+    loadSchematic(f);
+  });
 
   $("#mats-per-layer").addEventListener("change", renderOutputs);
   $("#btn-copy-mats").addEventListener("click", () => {
@@ -1970,7 +2518,7 @@ function initEvents() {
 }
 
 /* ------------------------------------------------------------------
-   14. セルフテスト（?selftest=1）
+   15. セルフテスト（?selftest=1）
 
    幾何の不変条件だけを見る。ここが 0 failed でないと CI がデプロイしない。
    ------------------------------------------------------------------ */
@@ -2316,6 +2864,111 @@ function runSelfTest() {
     return g2.palette.length === 2;
   })());
 
+
+  // --- 13. スケマティック読み込み ---
+  // 3×3×3 の最小フィクスチャ。床の石 9 個・中央にホッパー（北向き）・角に階段（東向き）。
+  // 4 形式とも同じ図面になることを見る。gzip でないファイルはそのまま読める。
+  const FIX = {
+    nbt: "CgAACQAEc2l6ZQMAAAADAAAAAwAAAAMAAAADCQAHcGFsZXR0ZQoAAAAECAAETmFtZQANbWluZWNyYWZ0OmFpcgAIAAROYW1lAA9taW5lY3JhZnQ6c3RvbmUACAAETmFtZQAQbWluZWNyYWZ0OmhvcHBlcgoAClByb3BlcnRpZXMIAAZmYWNpbmcABW5vcnRoAAAIAAROYW1lABRtaW5lY3JhZnQ6b2FrX3N0YWlycwoAClByb3BlcnRpZXMIAAZmYWNpbmcABGVhc3QAAAkABmJsb2NrcwoAAAALAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAAAAAAAAAAAAAAAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAABAAAAAAAAAAAAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAACAAAAAAAAAAAAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAAAAAAAAAAAAAEAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAABAAAAAAAAAAEAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAACAAAAAAAAAAEAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAAAAAAAAAAAAAIAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAABAAAAAAAAAAIAAwAFc3RhdGUAAAABCQADcG9zAwAAAAMAAAACAAAAAAAAAAIAAwAFc3RhdGUAAAACCQADcG9zAwAAAAMAAAABAAAAAQAAAAEAAwAFc3RhdGUAAAADCQADcG9zAwAAAAMAAAACAAAAAgAAAAAAAA==",
+    v2: "CgAAAwAHVmVyc2lvbgAAAAICAAVXaWR0aAADAgAGSGVpZ2h0AAMCAAZMZW5ndGgAAwoAB1BhbGV0dGUDAA1taW5lY3JhZnQ6YWlyAAAAAAMAD21pbmVjcmFmdDpzdG9uZQAAAAEDAB5taW5lY3JhZnQ6aG9wcGVyW2ZhY2luZz1ub3J0aF0AAAACAwAhbWluZWNyYWZ0Om9ha19zdGFpcnNbZmFjaW5nPWVhc3RdAAAAAwAHAAlCbG9ja0RhdGEAAAAbAQEBAQEBAQEBAAAAAAIAAAAAAAADAAAAAAAAAA==",
+    v3: "CgAACgAJU2NoZW1hdGljAwAHVmVyc2lvbgAAAAMCAAVXaWR0aAADAgAGSGVpZ2h0AAMCAAZMZW5ndGgAAwoABkJsb2NrcwoAB1BhbGV0dGUDAA1taW5lY3JhZnQ6YWlyAAAAAAMAD21pbmVjcmFmdDpzdG9uZQAAAAEDAB5taW5lY3JhZnQ6aG9wcGVyW2ZhY2luZz1ub3J0aF0AAAACAwAhbWluZWNyYWZ0Om9ha19zdGFpcnNbZmFjaW5nPWVhc3RdAAAAAwAHAAREYXRhAAAAGwEBAQEBAQEBAQAAAAACAAAAAAAAAwAAAAAAAAAAAA==",
+    lit: "CgAAAwAHVmVyc2lvbgAAAAYKAAhNZXRhZGF0YQgABE5hbWUAD+ODhuOCueODiOWwj+WxiwoADUVuY2xvc2luZ1NpemUDAAF4AAAAAwMAAXkAAAADAwABegAAAAMAAAoAB1JlZ2lvbnMKAARtYWluCgAIUG9zaXRpb24DAAF4AAAAAAMAAXkAAAAAAwABegAAAAAACgAEU2l6ZQMAAXgAAAADAwABeQAAAAMDAAF6AAAAAwAJABFCbG9ja1N0YXRlUGFsZXR0ZQoAAAAECAAETmFtZQANbWluZWNyYWZ0OmFpcgAIAAROYW1lAA9taW5lY3JhZnQ6c3RvbmUACAAETmFtZQAQbWluZWNyYWZ0OmhvcHBlcgoAClByb3BlcnRpZXMIAAZmYWNpbmcABW5vcnRoAAAIAAROYW1lABRtaW5lY3JhZnQ6b2FrX3N0YWlycwoAClByb3BlcnRpZXMIAAZmYWNpbmcABGVhc3QAAAwAC0Jsb2NrU3RhdGVzAAAAAQAAAwAIAVVVAAAA",
+    gz: "H4sIAOyjkWoC/42P3QqDMAyF01qdOsZ2safZQ4y9wegkzuJPpcnVnn4VpsWJ0EAhTc7Jl5QABSgyH0wAYPUKOIy6Q2Ys/VfloO66Rzj1ZsDK6Zpv2jiYy+dQJrYDLo1LaDR2HNGVUD6c9QkbpByyWldmeEM6WMcNLL5r8FndPok9jXa8CjXxdEn26mzV0rTwMYHUmxh9LgpIRkvzaSH2NSJCIyM0c4gIlohgiQiWjGDJCNZKI7dzxP8+yXbOb9YXfV6X42gCAAA=",
+  };
+  const fixBytes = (b64) => {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  };
+  const fixGrid = (key) => detectAndParse(parseNBT(fixBytes(FIX[key])));
+  const fixExpect = { "minecraft:stone": 9, "minecraft:hopper": 1, "minecraft:oak_stairs": 1 };
+
+  for (const [key, label] of [["nbt", ".nbt"], ["v2", ".schem v2"], ["v3", ".schem v3"], ["lit", ".litematic"]]) {
+    let g = null, err = "";
+    try { g = fixGrid(key); } catch (e) { err = e.message; }
+    ok(label + " が読める", g, err);
+    if (!g) continue;
+    ok(label + " の寸法が 3×3×3", g.sx === 3 && g.sy === 3 && g.sz === 3, g.sx + "×" + g.sy + "×" + g.sz);
+    ok(label + " の材料が一致", (() => {
+      const m = Object.fromEntries(buildMaterials(g).items.map((i) => [i.id, i.count]));
+      return JSON.stringify(m) === JSON.stringify(fixExpect);
+    })(), JSON.stringify(Object.fromEntries(buildMaterials(g).items.map((i) => [i.id, i.count]))));
+    ok(label + " のブロック状態と向きが残る", (() => {
+      const hop = gBlock(g, 1, 1, 1), stair = gBlock(g, 2, 2, 0);
+      return hop.id === "minecraft:hopper" && hop.props.facing === "north" && hop.dir === DIR.NORTH &&
+        stair.id === "minecraft:oak_stairs" && stair.dir === DIR.EAST && stair.kind === K.STAIR;
+    })());
+    ok(label + " は空気を添字 0 に潰す", gIdx(g, 0, 2, 0) === 0 && gBlock(g, 0, 2, 0).kind === K.EMPTY);
+  }
+
+  ok("4 形式が完全に同じ図面になる", (() => {
+    const gs = ["nbt", "v2", "v3", "lit"].map(fixGrid);
+    for (let y = 0; y < 3; y++) {
+      for (let z = 0; z < 3; z++) {
+        for (let x = 0; x < 3; x++) {
+          const want = blockName(gBlock(gs[0], x, y, z));
+          for (const g of gs) if (blockName(gBlock(g, x, y, z)) !== want) return false;
+        }
+      }
+    }
+    return true;
+  })());
+  ok(".litematic は Metadata の名前をタイトルにする", fixGrid("lit").title === "テスト小屋");
+  ok("読み込んだグリッドは source が import", fixGrid("nbt").source === "import");
+  ok("gzip かどうかを見分ける", isGzip(fixBytes(FIX.gz)) && !isGzip(fixBytes(FIX.nbt)));
+  ok("知らない形式はエラーになる", (() => {
+    try { detectAndParse({ hello: 1 }); return false; } catch (e) { return /知らない形式/.test(e.message); }
+  })());
+  ok("壊れた NBT はエラーになる", (() => {
+    try { parseNBT(new Uint8Array([10, 0, 1])); return false; } catch (e) { return true; }
+  })());
+
+  // --- 14. ビットパックの解除 ---
+  // long の境界をまたぐ位置が正しく読めるか。同じ詰め方を BigInt で作って突き合わせる
+  ok("ビット幅 2 / 3 / 5 で境界をまたいでも読める", (() => {
+    for (const bits of [2, 3, 5]) {
+      const n = 200;
+      const values = [];
+      for (let i = 0; i < n; i++) values.push(i % (1 << bits));
+      const tmp = new BigUint64Array(Math.ceil((n * bits) / 64));
+      for (let i = 0; i < n; i++) {
+        const start = i * bits, a = start >>> 6, off = BigInt(start & 63);
+        const b = ((i + 1) * bits - 1) >>> 6;
+        tmp[a] |= BigInt.asUintN(64, BigInt(values[i]) << off);
+        if (a !== b) tmp[b] |= BigInt(values[i]) >> (64n - off);
+      }
+      const longs = new BigInt64Array(tmp.length);
+      for (let i = 0; i < tmp.length; i++) longs[i] = BigInt.asIntN(64, tmp[i]);
+      const read = litematicaReader(longs, bits);
+      for (let i = 0; i < n; i++) if (read(i) !== values[i]) return false;
+    }
+    return true;
+  })());
+
+  // --- 15. ブロック状態の文字列 ---
+  ok("ブロック状態の文字列を割れる", (() => {
+    const a = parseBlockState("minecraft:oak_stairs[facing=east,half=bottom]");
+    const b = parseBlockState("stone");
+    return a.id === "minecraft:oak_stairs" && a.props.facing === "east" && a.props.half === "bottom" &&
+      b.id === "minecraft:stone" && Object.keys(b.props).length === 0;
+  })());
+  ok("ブロック状態を文字列に戻せる",
+    blockName({ id: "minecraft:hopper", props: { facing: "north" } }) === "minecraft:hopper[facing=north]");
+  ok("読み込んだ図面のテキストは記号と凡例が 1 対 1", (() => {
+    const g = fixGrid("nbt");
+    const { legend } = symbolMap(g);
+    if (!legend) return false;
+    const used = new Set();
+    for (const l of legend) { if (used.has(l.ch)) return false; used.add(l.ch); }
+    const txt = buildText(defaultState(), g);
+    return legend.every((l) => txt.includes(l.ch + " = " + blockName(l.entry)));
+  })());
+  ok("読み込んだ図面の setblock はブロック状態付き", (() => {
+    const cmd = buildCommands(defaultState(), fixGrid("nbt"));
+    return /minecraft:hopper\[facing=north\]/.test(cmd) && /minecraft:oak_stairs\[facing=east\]/.test(cmd);
+  })());
+
   // --- 結果表示 ---
   const passed = results.filter((r) => r.pass).length;
   const failed = results.length - passed;
@@ -2326,7 +2979,7 @@ function runSelfTest() {
 }
 
 /* ------------------------------------------------------------------
-   15. 起動
+   16. 起動
    ------------------------------------------------------------------ */
 
 function init() {
