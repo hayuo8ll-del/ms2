@@ -173,6 +173,9 @@ legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
 .drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
 .drop b { font-size: 13.5px; }
 .drop span { font-size: 12px; color: var(--muted); }
+.iso-ctl { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin: 0; }
+.iso-ctl input[type="range"] { width: 110px; padding: 0; }
+
 .repo-bar { display: flex; gap: 8px; margin-bottom: 6px; }
 .repo-bar input { flex: 1; min-width: 0; }
 .filelist { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
@@ -440,6 +443,7 @@ pre.code {
   <section class="pane out">
     <div class="tabs" role="tablist">
       <button data-tab="plan" role="tab" aria-selected="true">平面図</button>
+      <button data-tab="iso" role="tab" aria-selected="false">完成イメージ</button>
       <button data-tab="sheet" role="tab" aria-selected="false">全レイヤー</button>
       <button data-tab="mats" role="tab" aria-selected="false">材料</button>
       <button data-tab="text" role="tab" aria-selected="false">テキスト</button>
@@ -469,6 +473,22 @@ pre.code {
       </div>
       <div class="canvaswrap"><canvas id="elev"></canvas></div>
       <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="tabpanel" id="tab-iso">
+      <div class="planbar">
+        <button class="mini" id="iso-left" title="左に回す">◀ 回す</button>
+        <button class="mini" id="iso-right" title="右に回す">回す ▶</button>
+        <label class="iso-ctl">積み上げ
+          <input type="range" id="iso-height" min="1" max="1" value="1">
+        </label>
+        <label class="iso-ctl">大きさ
+          <input type="range" id="iso-zoom" min="2" max="16" value="6">
+        </label>
+        <button class="mini" id="iso-png">PNG 保存</button>
+      </div>
+      <p class="readout" id="iso-status"></p>
+      <div class="canvaswrap"><canvas id="iso"></canvas></div>
     </div>
 
     <div class="tabpanel" id="tab-sheet">
@@ -589,6 +609,9 @@ function defaultState() {
 let state = defaultState();
 let layerIndex = 0;
 let elevMode = "section";
+let isoRot = 0;                 // 0〜3。90 度ずつ回す
+let isoHeight = 0;              // 0 なら全部（完成状態）
+let isoZoom = 6;
 let activeTab = "plan";
 
 /* ------------------------------------------------------------------
@@ -1643,6 +1666,9 @@ const LANDMARKS = {
       out.push(carve(mid(pArchVoid(c.st, span, rise, c.m(4)), y + 1, 0, -Math.floor(body / 2) + c.m(2))));
       out.push(carve(mid(pArchVoid(c.st, span, rise, c.m(4)), y + 1, 0, Math.floor(body / 2) - c.m(2))));
       y += c.m(34);
+      // 屋上のテラス。これが無いと本体が箱のまま開いていて、ドームが宙に浮く
+      out.push(mid(pBox(c.st, "minecraft:quartz_block", body, 1, body), y));
+      y += 1;
       // 胴（ドラム）と大ドーム。玉ねぎ形なので、半球を縦に伸ばす
       const drumR = Math.max(2, Math.round(c.m(17) / 2));
       out.push(mid(pColumn(c.st, "minecraft:quartz_block", drumR, c.m(9)), y));
@@ -1655,8 +1681,9 @@ const LANDMARKS = {
       for (const sx of [-off, off]) {
         for (const sz of [-off, off]) {
           const r = Math.max(2, Math.round(c.m(7) / 2));
-          out.push(mid(pColumn(c.st, "minecraft:quartz_block", r, c.m(4)), Math.max(1, c.m(6)) + c.m(34), sx, sz));
-          out.push(mid(pDome(c.st, "minecraft:quartz_block", r, r), Math.max(1, c.m(6)) + c.m(34) + c.m(4), sx, sz));
+          const base = Math.max(1, c.m(6)) + c.m(34) + 1;
+          out.push(mid(pColumn(c.st, "minecraft:quartz_block", r, c.m(4)), base, sx, sz));
+          out.push(mid(pDome(c.st, "minecraft:quartz_block", r, r), base + c.m(4), sx, sz));
         }
       }
       // 四本のミナレット
@@ -3226,6 +3253,135 @@ function blockColor(entry, g) {
   return col;
 }
 
+/* ---------- 完成イメージ（等角投影） ----------
+
+   平面図と立面図だけだと、積み上がった姿が分からない。
+   3D ライブラリは使わず（ビルド不要・依存なしを崩さないため）、
+   キャンバスに等角投影で立方体を描く。
+
+   カメラは +X +Z +Y の角から見下ろす向き。だから
+     ・奥から手前（rx + rz + y の昇順）に描けば前後関係が正しくなる
+     ・+X / +Z / +Y のどれかが空いているブロックだけが見える
+   この 2 つで、内部に埋まったブロックは最初から描かずに済む。 */
+
+/** 回した後の座標から、元の座標に戻す */
+function invRot(rot, rx, rz, sx, sz) {
+  switch (rot & 3) {
+    case 1: return [rz, sz - 1 - rx];
+    case 2: return [sx - 1 - rx, sz - 1 - rz];
+    case 3: return [sx - 1 - rz, rx];
+    default: return [rx, rz];
+  }
+}
+
+/**
+ * 見えるブロックだけを、奥から手前の順で返す。
+ * maxY を指定すると、そこまで積んだ状態になる（途中経過を見るため）。
+ */
+function isoCells(g, rot, maxY) {
+  const swap = (rot & 1) === 1;
+  const W = swap ? g.sz : g.sx;
+  const D = swap ? g.sx : g.sz;
+  const H = Math.max(1, Math.min(g.sy, maxY == null ? g.sy : maxY));
+
+  const get = (rx, rz, y) => {
+    if (rx < 0 || rz < 0 || y < 0 || rx >= W || rz >= D || y >= H) return 0;
+    const [x, z] = invRot(rot, rx, rz, g.sx, g.sz);
+    return g.layers[y][z * g.sx + x];
+  };
+
+  const cells = [];
+  for (let y = 0; y < H; y++) {
+    for (let rz = 0; rz < D; rz++) {
+      for (let rx = 0; rx < W; rx++) {
+        const idx = get(rx, rz, y);
+        if (!idx) continue;
+        // 手前 3 方向がすべて埋まっていれば、このブロックは見えない
+        if (get(rx + 1, rz, y) && get(rx, rz + 1, y) && get(rx, rz, y + 1)) continue;
+        cells.push({ rx, rz, y, idx });
+      }
+    }
+  }
+  cells.sort((a, b) => (a.rx + a.rz + a.y) - (b.rx + b.rz + b.y));
+  return { cells, W, D, H };
+}
+
+/** 色を明るく／暗くする。#rrggbb と hsl() のどちらでも扱えるようにしておく */
+const shadeCache = new Map();
+function shadeColor(color, amount) {
+  const key = color + "|" + amount;
+  const hit = shadeCache.get(key);
+  if (hit) return hit;
+  let out = color;
+  const hex = /^#([0-9a-f]{6})$/i.exec(color);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const t = amount >= 0 ? v + (255 - v) * amount : v * (1 + amount);
+      return Math.max(0, Math.min(255, Math.round(t)));
+    });
+    out = "rgb(" + ch.join(",") + ")";
+  } else {
+    const hsl = /^hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\s*\)$/i.exec(color);
+    if (hsl) {
+      const l = Math.max(0, Math.min(100, Number(hsl[3]) * (1 + amount)));
+      out = "hsl(" + hsl[1] + " " + hsl[2] + "% " + l.toFixed(1) + "%)";
+    }
+  }
+  shadeCache.set(key, out);
+  return out;
+}
+
+/** 立方体 1 個。上面・左面・右面の 3 枚を、明るさを変えて塗る */
+function drawCube(ctx, px, py, w2, h2, hh, color) {
+  ctx.fillStyle = shadeColor(color, 0.18);            // 上面
+  ctx.beginPath();
+  ctx.moveTo(px, py - h2); ctx.lineTo(px + w2, py); ctx.lineTo(px, py + h2); ctx.lineTo(px - w2, py);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = shadeColor(color, -0.18);           // 左面
+  ctx.beginPath();
+  ctx.moveTo(px - w2, py); ctx.lineTo(px, py + h2);
+  ctx.lineTo(px, py + h2 + hh); ctx.lineTo(px - w2, py + hh);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = shadeColor(color, -0.38);           // 右面
+  ctx.beginPath();
+  ctx.moveTo(px + w2, py); ctx.lineTo(px, py + h2);
+  ctx.lineTo(px, py + h2 + hh); ctx.lineTo(px + w2, py + hh);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawIso(canvas, g, opts) {
+  const o = opts || {};
+  const tile = Math.max(2, Math.min(16, o.tile || 6));
+  const { cells, W, D, H } = isoCells(g, o.rot || 0, o.maxY);
+
+  const w2 = tile, h2 = tile / 2, hh = tile;
+  const pad = tile;
+  const width = (W + D) * w2 + pad * 2;
+  const height = H * hh + (W + D) * h2 + pad * 2;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const ox = pad + D * w2;
+  const oy = pad + (H - 1) * hh + h2;
+  for (const c of cells) {
+    drawCube(ctx,
+      ox + (c.rx - c.rz) * w2,
+      oy + (c.rx + c.rz) * h2 - c.y * hh,
+      w2, h2, hh, blockColor(g.palette[c.idx], g));
+  }
+  return cells.length;
+}
+
 /** 平面図。cell はセルの一辺（px）、gutter は座標目盛りの帯 */
 function drawPlan(canvas, g, y, opts) {
   const o = opts || {};
@@ -3480,6 +3636,29 @@ function planCellSize(g) {
   return Math.max(6, Math.min(26, Math.floor((avail - 24) / Math.max(g.sx, 1))));
 }
 
+function renderIso(g) {
+  const hMax = Math.max(1, g.sy);
+  if (!isoHeight || isoHeight > hMax) isoHeight = hMax;
+
+  const slider = $("#iso-height");
+  slider.max = String(hMax);
+  slider.value = String(isoHeight);
+  $("#iso-zoom").value = String(isoZoom);
+
+  // 大きいものは自動で小さめに描く（手で変えられる）
+  const t0 = Date.now();
+  const drawn = drawIso($("#iso"), g, { rot: isoRot, maxY: isoHeight, tile: isoZoom });
+  const took = Date.now() - t0;
+
+  const dirs = ["南東から", "南西から", "北西から", "北東から"];
+  $("#iso-status").textContent =
+    dirs[isoRot & 3] + "見た図  /  " +
+    (isoHeight >= hMax ? "完成状態" : isoHeight + " 段目まで積んだ状態") +
+    "  /  見えているブロック " + drawn.toLocaleString() +
+    "（全 " + countBlocks(g).toLocaleString() + "）" +
+    (took > 400 ? "  /  描画 " + took + "ms。重いときは「大きさ」を下げてください" : "");
+}
+
 function renderSheet(g) {
   const wrap = $("#sheet");
   wrap.textContent = "";
@@ -3525,6 +3704,7 @@ function renderOutputs() {
   slider.value = String(layerIndex);
   $("#layer-label").textContent = (layerIndex + 1) + " 段目 / 全 " + g.sy + " 段";
 
+  if (isoHeight > g.sy) isoHeight = 0;      // 別の図面に切り替えたら完成状態に戻す
   drawPlan($("#plan"), g, layerIndex, { cell: planCellSize(g), ghost: true });
   drawElevation($("#elev"), g, elevMode);
   renderLegend(g);
@@ -3535,6 +3715,7 @@ function renderOutputs() {
     "この段 " + countLayer(g, layerIndex).toLocaleString() +
     (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "");
 
+  if (activeTab === "iso") renderIso(g);
   if (activeTab === "sheet") renderSheet(g);
   if (activeTab === "mats") renderMaterials(g);
   if (activeTab === "text") $("#text-out").textContent = buildText(state, g);
@@ -3781,6 +3962,16 @@ function initEvents() {
     e.preventDefault();
     state.mode = "import";
     loadSchematic(f);
+  });
+
+  $("#iso-left").addEventListener("click", () => { isoRot = (isoRot + 3) & 3; renderOutputs(); });
+  $("#iso-right").addEventListener("click", () => { isoRot = (isoRot + 1) & 3; renderOutputs(); });
+  $("#iso-height").addEventListener("input", (e) => { isoHeight = Number(e.target.value); renderOutputs(); });
+  $("#iso-zoom").addEventListener("input", (e) => { isoZoom = Number(e.target.value); renderOutputs(); });
+  $("#iso-png").addEventListener("click", () => {
+    $("#iso").toBlob((blob) => {
+      if (blob) downloadBlob(blob, "blueprint-iso.png");
+    });
   });
 
   $("#mats-per-layer").addEventListener("change", renderOutputs);
@@ -4595,6 +4786,88 @@ function runSelfTest() {
     return g.sy === 4 && ids.has("minecraft:stone") && ids.has("minecraft:oak_planks") && ids.size === 2;
   })());
   ok("有名建築の source は landmark", buildLandmark(lmSt("pisa")).source === "landmark");
+
+
+  // --- 19. 完成イメージ（等角投影） ---
+  const cube = pBox(defaultState(), "minecraft:stone", 3, 3, 3, {});
+
+  ok("回転は 4 回で元に戻る", (() => {
+    for (let rot = 0; rot < 4; rot++) {
+      // 回した座標から元に戻せること（全マスで往復する）
+      const swap = (rot & 1) === 1;
+      const W = swap ? 3 : 3, D = swap ? 3 : 3;
+      const seen = new Set();
+      for (let rz = 0; rz < D; rz++) {
+        for (let rx = 0; rx < W; rx++) {
+          const [x, z] = invRot(rot, rx, rz, 3, 3);
+          if (x < 0 || z < 0 || x > 2 || z > 2) return false;
+          seen.add(x + "," + z);
+        }
+      }
+      if (seen.size !== 9) return false;    // 1 対 1 になっている
+    }
+    return true;
+  })());
+  ok("回転で幅と奥行きが入れ替わる", (() => {
+    const g = pBox(defaultState(), "minecraft:stone", 5, 2, 3, {});
+    return isoCells(g, 0).W === 5 && isoCells(g, 0).D === 3 &&
+      isoCells(g, 1).W === 3 && isoCells(g, 1).D === 5;
+  })());
+
+  ok("中に埋まったブロックは描かない", (() => {
+    // 3×3×3 の中身のうち、手前 3 方向がすべて埋まっている 2×2×2 = 8 個が隠れる
+    const { cells } = isoCells(cube, 0);
+    return cells.length === 27 - 8;
+  })());
+  ok("どの向きでも隠れる数は同じ", (() => {
+    for (let rot = 0; rot < 4; rot++) if (isoCells(cube, rot).cells.length !== 19) return false;
+    return true;
+  })());
+  ok("奥から手前の順に並ぶ", (() => {
+    const { cells } = isoCells(cube, 0);
+    for (let i = 1; i < cells.length; i++) {
+      const a = cells[i - 1], b = cells[i];
+      if ((a.rx + a.rz + a.y) > (b.rx + b.rz + b.y)) return false;
+    }
+    return true;
+  })());
+  ok("積み上げの高さを指定すると、そこまでになる", (() => {
+    const { cells, H } = isoCells(cube, 0, 2);
+    if (H !== 2) return false;
+    if (cells.some((c) => c.y >= 2)) return false;
+    // 切った面は上が空くので見える。3×3×2 のうち隠れるのは 2×2×1 = 4 個
+    return cells.length === 18 - 4;
+  })());
+  ok("高さ 1 なら最下段だけ", isoCells(cube, 0, 1).cells.every((c) => c.y === 0));
+  ok("空のグリッドでも壊れない", isoCells(makeGrid(2, 2, 2, defaultState()), 0).cells.length === 0);
+
+  ok("色を明るく・暗くできる（16 進）", (() => {
+    const light = shadeColor("#808080", 0.5), dark = shadeColor("#808080", -0.5);
+    return /^rgb\(/.test(light) && /^rgb\(/.test(dark) && light !== dark;
+  })());
+  ok("色を明るく・暗くできる（hsl）", (() => {
+    const dark = shadeColor("hsl(200 42% 58%)", -0.5);
+    return /^hsl\(200 42% 29\.0%\)$/.test(dark);
+  })());
+  ok("知らない書式はそのまま返す", shadeColor("rebeccapurple", 0.5) === "rebeccapurple");
+
+  ok("有名建築も等角図にできる", (() => {
+    for (const key of ["goju_no_to", "taj_mahal", "otorii"]) {
+      const g = buildLandmark(lmSt(key));
+      const { cells } = isoCells(g, 0);
+      if (!cells.length || cells.length > countBlocks(g)) return false;
+    }
+    return true;
+  })());
+  ok("タージ・マハルの本体には屋上がある", (() => {
+    // 屋上が無いとドームが宙に浮く。中央の柱の真下が埋まっていることで確かめる
+    const g = buildLandmark(lmSt("taj_mahal"));
+    const cx = Math.floor(g.sx / 2), cz = Math.floor(g.sz / 2);
+    let top = -1;
+    for (let y = 0; y < g.sy; y++) if (gGet(g, cx, y, cz)) top = y;
+    // 中央の縦一列に、途切れずに続く部分がある（ドームの下に床がある）
+    return top > 0 && gGet(g, cx, top - 1, cz) !== K.EMPTY;
+  })());
 
   // --- 結果表示 ---
   const passed = results.filter((r) => r.pass).length;
