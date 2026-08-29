@@ -622,6 +622,12 @@ function defaultState() {
     detailVariation: true,
     detailCorners: true,
     shapeDetail: false,
+    // 湧き潰しと装飾
+    spawnProof: false,
+    lightBlock: "minecraft:lantern",
+    railings: false,
+    fenceBlock: "minecraft:oak_fence",
+    eaveLanterns: false,
     lmScale: 0,                   // 0 なら建物ごとの既定スケールを使う
     lmQuery: "",
     // コマンド出力
@@ -1549,6 +1555,222 @@ function detailGrid(g, opts) {
   return out;
 }
 
+/* ---------- 湧き潰しと装飾 ----------
+
+   建てたあとに必ずやることを、図面の側で済ませておく。
+
+   湧き潰しは「暗いところにモブが湧く」への対処で、要は光を届かせること。
+   1.18 以降は**ブロック光が 0 のところにだけ湧く**ので、レベル 1 以上あれば止まる。
+   光はマイクラでは隣のマスへ 1 ずつ減りながら広がり、不透明ブロックで遮られる。
+   距離の式で近似すると壁の裏を数え間違えるので、ここでは実際と同じ広がり方
+   （不透明ブロックを避ける幅優先探索）で計算する。 */
+
+/** 光を通さない＝湧きの足場になりうるブロック。ガラスや葉、松明などは含めない */
+const NON_SOLID = new Set([
+  "minecraft:glass", "minecraft:glass_pane", "minecraft:tinted_glass", "minecraft:ice",
+  "minecraft:torch", "minecraft:wall_torch", "minecraft:soul_torch", "minecraft:lantern",
+  "minecraft:redstone_torch", "minecraft:rail", "minecraft:powered_rail", "minecraft:ladder",
+  "minecraft:iron_bars", "minecraft:chain", "minecraft:scaffolding", "minecraft:water",
+  "minecraft:lava", "minecraft:cobweb", "minecraft:vine", "minecraft:string", "minecraft:tripwire",
+  "minecraft:sea_lantern",
+]);
+
+/** 光源とその明るさ。松明は 14、ランタンやグロウストーンは 15 */
+const LIGHT_SOURCES = {
+  "minecraft:torch": 14,
+  "minecraft:lantern": 15,
+  "minecraft:soul_lantern": 10,
+  "minecraft:sea_lantern": 15,
+  "minecraft:glowstone": 15,
+  "minecraft:shroomlight": 15,
+  "minecraft:froglight": 15,
+  "minecraft:redstone_lamp": 15,
+};
+
+const isOpaqueBlock = (entry) =>
+  entry && entry.kind !== K.EMPTY && !NON_SOLID.has(entry.id) &&
+  !/_pane$|_fence$|_slab$|^minecraft:(glass|leaves)/.test(entry.id) &&
+  !/_leaves$/.test(entry.id);
+
+/**
+ * 湧けるマスを集める。
+ * 足元が不透明で、そのマスと頭上が空いていること（高さ 2 が要る）。
+ */
+function spawnableSpots(g) {
+  const solid = (x, y, z) => isOpaqueBlock(gBlock(g, x, y, z));
+  const empty = (x, y, z) => gGet(g, x, y, z) === K.EMPTY;
+  const out = [];
+  for (let y = 1; y < g.sy; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!empty(x, y, z)) continue;
+        if (!solid(x, y - 1, z)) continue;
+        // 頭上。図面の外は空とみなす（屋外の屋根の上も湧くので）
+        if (y + 1 < g.sy && !empty(x, y + 1, z)) continue;
+        out.push({ x, y, z });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 光源 1 つが照らす範囲。マイクラと同じく、隣のマスへ 1 ずつ減りながら広がり、
+ * 不透明ブロックには入らない。到達したマスと、そこでの明るさを返す。
+ */
+function floodLight(g, sx, sy, sz, level) {
+  const reach = new Map();
+  const key = (x, y, z) => (y * g.sz + z) * g.sx + x;
+  let frontier = [[sx, sy, sz, level]];
+  reach.set(key(sx, sy, sz), level);
+  while (frontier.length) {
+    const next = [];
+    for (const [x, y, z, lv] of frontier) {
+      if (lv <= 1) continue;
+      const steps = [[x + 1, y, z], [x - 1, y, z], [x, y + 1, z], [x, y - 1, z], [x, y, z + 1], [x, y, z - 1]];
+      for (const [nx, ny, nz] of steps) {
+        if (nx < 0 || ny < 0 || nz < 0 || nx >= g.sx || ny >= g.sy || nz >= g.sz) continue;
+        if (isOpaqueBlock(gBlock(g, nx, ny, nz))) continue;
+        const k = key(nx, ny, nz);
+        const nl = lv - 1;
+        if ((reach.get(k) || 0) >= nl) continue;
+        reach.set(k, nl);
+        next.push([nx, ny, nz, nl]);
+      }
+    }
+    frontier = next;
+  }
+  return reach;
+}
+
+/**
+ * 湧き潰しの計画。湧けるマスが全部、光レベル 1 以上になるように光源を置く。
+ * 未処理のマスに出会ったらそこへ置く、という素直な貪欲法。
+ * 置いた光源から実際に光を広げて、届いた先を処理済みにしていく。
+ */
+function planLights(g, blockId) {
+  const level = LIGHT_SOURCES[blockId] || 14;
+  const spots = spawnableSpots(g);
+  const key = (x, y, z) => (y * g.sz + z) * g.sx + x;
+  const index = new Map();
+  spots.forEach((s, i) => index.set(key(s.x, s.y, s.z), i));
+
+  const lit = new Uint8Array(spots.length);
+  const lights = [];
+  for (let i = 0; i < spots.length; i++) {
+    if (lit[i]) continue;
+    const s = spots[i];
+    lights.push(s);
+    lit[i] = 1;
+    const reach = floodLight(g, s.x, s.y, s.z, level);
+    for (const [k, lv] of reach) {
+      if (lv < 1) continue;
+      const j = index.get(k);
+      if (j != null) lit[j] = 1;
+    }
+  }
+  return { lights, spots: spots.length, level };
+}
+
+/** 計画した光源を図面に置く */
+function addLights(g, blockId) {
+  const plan = planLights(g, blockId);
+  if (!plan.lights.length) return { grid: g, count: 0, spots: plan.spots };
+  const out = cloneGrid(g);
+  const idx = paletteIndex(out, { id: blockId, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  for (const s of plan.lights) gSetIdx(out, s.x, s.y, s.z, idx);
+  return { grid: out, count: plan.lights.length, spots: plan.spots };
+}
+
+/** 中身をそのまま写した新しいグリッド。extraY を渡すと上に空の段を足す */
+function cloneGrid(g, extraY) {
+  const out = makeGrid(g.sx, g.sy + Math.max(0, extraY || 0), g.sz, null);
+  out.source = g.source;
+  out.title = g.title;
+  out.labelX0 = g.labelX0;
+  out.labelZ0 = g.labelZ0;
+  if (g.landmark) { out.landmark = g.landmark; out.scale = g.scale; }
+  if (g.fileName) out.fileName = g.fileName;
+  const map = g.palette.map((e, i) => (i === 0 ? 0 : paletteIndex(out, e)));
+  for (let y = 0; y < g.sy; y++) {
+    for (let i = 0; i < g.layers[y].length; i++) out.layers[y][i] = map[g.layers[y][i]];
+  }
+  return out;
+}
+
+/* ---------- 装飾 ---------- */
+
+/**
+ * 欄干。平らな上面のうち、外へ落ちる縁にフェンスを立てる。
+ * 斜めの屋根に立てると柵だらけになるので、足元とその隣が同じ高さのところだけにする。
+ */
+function addRailings(g, fenceId) {
+  // 屋上の縁は図面のいちばん上にある。柵を立てる余地が無いので 1 段足しておき、
+  // 結局なにも立たなければ足した段を落とす
+  const base = cloneGrid(g, 1);
+  const out = cloneGrid(g, 1);
+  const idx = paletteIndex(out, { id: fenceId, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const solid = (x, y, z) => isOpaqueBlock(gBlock(base, x, y, z));
+  const empty = (x, y, z) => gGet(base, x, y, z) === K.EMPTY;
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+  for (let y = 1; y < out.sy; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!empty(x, y, z) || !solid(x, y - 1, z)) continue;
+        if (y + 1 < out.sy && !empty(x, y + 1, z)) continue;   // 屋内には立てない
+        let dropX = 0, dropZ = 0, flat = true;
+        for (const [dx, dz] of dirs) {
+          const nx = x + dx, nz = z + dz;
+          // 隣が壁や屋根なら、そこは縁ではない。床の有無とは別に見る
+          // （階段状の屋根では「隣に床が無く、かつ隣が屋根」が同時に起きる）
+          if (!empty(nx, y, nz)) { flat = false; continue; }
+          if (solid(nx, y - 1, nz)) continue;
+          if (dx) dropX++; else dropZ++;                       // 隣に床が無い＝落ちる縁
+        }
+        // 片側だけが落ちるのが縁。両側とも落ちるのは幅 1 の背（大棟や柱の頭）で、
+        // 人が歩ける場所ではないから立てない
+        if (!flat || dropX === 2 || dropZ === 2) continue;
+        if (dropX || dropZ) gSetIdx(out, x, y, z, idx);
+      }
+    }
+  }
+  if (countLayer(out, out.sy - 1) === 0) { out.layers.pop(); out.sy--; }
+  return out;
+}
+
+/**
+ * 軒下のランタン。屋根の真下（真上が屋根で、足元は空）に吊るす。
+ * 張り出した軒先と、小屋裏のような屋根の下の空間が対象で、間隔をあけて置く。
+ */
+function addEaveLanterns(g, lanternId, step) {
+  const out = cloneGrid(g);
+  const idx = paletteIndex(out, {
+    id: lanternId, props: { hanging: "true" }, kind: K.BLOCK, dir: DIR.NONE,
+  });
+  const solid = (x, y, z) => isOpaqueBlock(gBlock(g, x, y, z));
+  const empty = (x, y, z) => gGet(g, x, y, z) === K.EMPTY;
+  const gap = Math.max(2, step || 4);
+
+  for (let y = 1; y < g.sy - 1; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!empty(x, y, z) || !solid(x, y + 1, z)) continue;   // 真上が屋根
+        if (!empty(x, y - 1, z)) continue;                      // 下は空いている
+        // 軒の外側だけ。横のどれかが空いていること
+        let openSide = false;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (empty(x + dx, y, z + dz) && empty(x + dx, y + 1, z + dz)) openSide = true;
+        }
+        if (!openSide) continue;
+        if ((x + z) % gap !== 0) continue;                      // 間隔をあける
+        gSetIdx(out, x, y, z, idx);
+      }
+    }
+  }
+  return out;
+}
+
 /* ---------- 有名建築のプリセット ----------
 
    世界遺産などの有名な建物を、既存の部品（箱・台形・四角錐・円柱・ドーム・
@@ -2292,7 +2514,19 @@ function build(st) {
     g = SHAPES[shape].build(st);
   }
   const detail = detailOptions(st);
-  return detail ? detailGrid(g, detail) : g;
+  if (detail) g = detailGrid(g, detail);
+  if (st.mode !== "import") {
+    // 装飾を先に置いてから湧き潰しをする。欄干や軒が光を遮ることがあるため
+    if (st.railings) g = addRailings(g, st.fenceBlock || "minecraft:oak_fence");
+    if (st.eaveLanterns) g = addEaveLanterns(g, "minecraft:lantern", 4);
+    if (st.spawnProof) {
+      const res = addLights(g, st.lightBlock || "minecraft:lantern");
+      g = res.grid;
+      g.lightCount = res.count;
+      g.spawnSpots = res.spots;
+    }
+  }
+  return g;
 }
 
 /* ------------------------------------------------------------------
@@ -3495,6 +3729,26 @@ function renderDetail() {
   }
   sw("detailVariation", "素材を混ぜる", "石レンガにひび・苔を少し混ぜます。材料表にも反映されます");
   sw("detailCorners", "外角に柱を立てる", "のっぺりした壁面を、角の柱で分けます");
+  sw("railings", "縁に欄干を立てる", "平らな上面のうち、外へ落ちる縁だけにフェンスを置きます");
+  sw("eaveLanterns", "軒下にランタンを吊る", "屋根の下（軒先や小屋裏）に、間隔をあけて吊り下げます");
+  sw("spawnProof", "湧き潰しをする",
+    "モブが湧けるマスが全部、光レベル 1 以上になるように灯りを置きます");
+
+  if (state.spawnProof) {
+    const sel = h("select", {
+      id: "d-lightBlock",
+      onchange: (e) => { state.lightBlock = e.target.value; renderAll(); },
+    });
+    for (const [id, lv] of Object.entries(LIGHT_SOURCES)) {
+      sel.appendChild(h("option", {
+        value: id, selected: state.lightBlock === id,
+        text: id.replace("minecraft:", "") + "（明るさ " + lv + "）",
+      }));
+    }
+    wrap.appendChild(h("div", { class: "field", style: "margin-left:24px" }, [
+      h("label", { for: "d-lightBlock", text: "使う灯り" }), sel,
+    ]));
+  }
 }
 
 function renderBlocks() {
@@ -4197,7 +4451,11 @@ function renderOutputs() {
     "寸法 " + g.sx + " × " + g.sz + " × " + g.sy + "（幅X × 奥行Z × 高さY）  /  " +
     "総ブロック数 " + countBlocks(g).toLocaleString() + "  /  " +
     "この段 " + countLayer(g, layerIndex).toLocaleString() +
-    (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "");
+    (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "") +
+    (g.lightCount != null
+      ? "  /  湧き潰し " + g.lightCount.toLocaleString() + " 個で " +
+        g.spawnSpots.toLocaleString() + " マスを処理"
+      : "");
 
   if (activeTab === "iso") renderIso(g);
   if (activeTab === "sheet") renderSheet(g);
@@ -5555,6 +5813,262 @@ function runSelfTest() {
     const idx = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
     lineBlocks(g, idx, 1, 1, 1, 10, 9, 4);
     return gGet(g, 1, 1, 1) !== K.EMPTY && gGet(g, 10, 9, 4) !== K.EMPTY;
+  })());
+
+  // --- 22. 湧き潰しと装飾 ---
+  // 光は「置いた結果のグリッド」から計算し直して確かめる。
+  // planLights の内部の帳簿を信じると、帳簿ごと間違っていても通ってしまう。
+  const lightMapOf = (g) => {
+    const key = (x, y, z) => (y * g.sz + z) * g.sx + x;
+    const map = new Map();
+    for (let y = 0; y < g.sy; y++) {
+      for (let z = 0; z < g.sz; z++) {
+        for (let x = 0; x < g.sx; x++) {
+          const e = gBlock(g, x, y, z);
+          const lv = e && LIGHT_SOURCES[e.id];
+          if (!lv) continue;
+          for (const [k, v] of floodLight(g, x, y, z, lv)) {
+            if ((map.get(k) || 0) < v) map.set(k, v);
+          }
+        }
+      }
+    }
+    return { map, key };
+  };
+  // 中身の突き合わせ用。ブロック ID と状態まで見る
+  const sig = (g) => {
+    const out = [];
+    for (let y = 0; y < g.sy; y++) {
+      for (let z = 0; z < g.sz; z++) {
+        for (let x = 0; x < g.sx; x++) {
+          const e = gBlock(g, x, y, z);
+          out.push(e ? e.id + propsKey(e.props) + ":" + e.kind + ":" + e.dir : "");
+        }
+      }
+    }
+    return out.join("|");
+  };
+  const darkSpots = (g) => {
+    const { map, key } = lightMapOf(g);
+    return spawnableSpots(g).filter((s) => (map.get(key(s.x, s.y, s.z)) || 0) < 1).length;
+  };
+
+  ok("湧けるマスは、足元が不透明で高さ 2 が空いているところ", (() => {
+    // 3 × 3 の石の床。上に 2 マス空きがあるので 9 マスすべて湧ける
+    const g = makeGrid(3, 3, 3, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let z = 0; z < 3; z++) for (let x = 0; x < 3; x++) gSetIdx(g, x, 0, z, stone);
+    if (spawnableSpots(g).length !== 9) return false;
+    // 天井を 1 マス分だけ塞ぐと、そのマスは高さが足りずに湧けなくなる
+    gSetIdx(g, 1, 2, 1, stone);
+    return spawnableSpots(g).length === 8;
+  })());
+  ok("ガラスの上には湧けるが、松明やフェンスの上には湧けない", (() => {
+    const mk = (id) => {
+      const g = makeGrid(1, 4, 1, defaultState());
+      gSetIdx(g, 0, 0, 0, paletteIndex(g, { id, props: {}, kind: K.BLOCK, dir: DIR.NONE }));
+      return spawnableSpots(g).length;
+    };
+    return mk("minecraft:stone") === 1 && mk("minecraft:glass") === 0 &&
+      mk("minecraft:torch") === 0 && mk("minecraft:oak_fence") === 0;
+  })());
+
+  ok("光は 1 マスごとに 1 ずつ減る", (() => {
+    const g = makeGrid(20, 3, 1, defaultState());
+    const reach = floodLight(g, 0, 1, 0, 15);
+    const at = (x) => reach.get((1 * g.sz + 0) * g.sx + x) || 0;
+    return at(0) === 15 && at(1) === 14 && at(14) === 1 && at(15) === 0;
+  })());
+  ok("光は不透明ブロックで遮られ、回り込む", (() => {
+    // 中央に壁を立てる。上に隙間があるので、回り込んだぶんだけ暗くなって届く
+    const g = makeGrid(9, 4, 1, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let y = 0; y < 3; y++) gSetIdx(g, 4, y, 0, stone);
+    const reach = floodLight(g, 0, 1, 0, 15);
+    const at = (x, y) => reach.get((y * g.sz + 0) * g.sx + x) || 0;
+    // 壁そのものには入らない。壁の裏は、直線で数えた 15-6=9 より暗い
+    return at(4, 1) === 0 && at(6, 1) > 0 && at(6, 1) < 9;
+  })());
+  ok("ガラス越しには光が通る", (() => {
+    const g = makeGrid(9, 3, 1, defaultState());
+    const glass = paletteIndex(g, { id: "minecraft:glass", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let y = 0; y < 3; y++) gSetIdx(g, 4, y, 0, glass);
+    const reach = floodLight(g, 0, 1, 0, 15);
+    return (reach.get((1 * g.sz + 0) * g.sx + 6) || 0) === 9;
+  })());
+
+  ok("湧き潰しをすると、湧けるマスが 1 つも暗く残らない", (() => {
+    const g = build(st({ mode: "shape", shape: "house", side: 15, height: 6, spawnProof: true }));
+    return g.lightCount > 0 && darkSpots(g) === 0;
+  })());
+  ok("湧き潰しは有名建築でも残さない", (() => {
+    const g = build(st({ mode: "landmark", landmark: "goju_no_to", spawnProof: true }));
+    return g.lightCount > 0 && darkSpots(g) === 0;
+  })());
+  ok("湧き潰しをしなければ光源は増えない", (() => {
+    const g = build(st({ mode: "shape", shape: "house", side: 15, height: 6, spawnProof: false }));
+    let n = 0;
+    for (const e of g.palette) if (e && LIGHT_SOURCES[e.id]) n++;
+    return n === 0 && g.lightCount == null;
+  })());
+  ok("同じ入力なら光源の置き方も同じ", (() => {
+    const opts = { mode: "shape", shape: "house", side: 15, height: 6, spawnProof: true };
+    const a = build(st(opts)), b = build(st(opts));
+    return a.lightCount === b.lightCount && sig(a) === sig(b);
+  })());
+  ok("光源を変えると明るさに応じて本数が変わる", (() => {
+    const mk = (id) => build(st({ mode: "shape", shape: "house", side: 21, height: 7,
+      spawnProof: true, lightBlock: id })).lightCount;
+    // ソウルランタンは 10、ランタンは 15。暗いぶん多く要る
+    return mk("minecraft:soul_lantern") > mk("minecraft:lantern");
+  })());
+  ok("光源は材料表に出る", (() => {
+    const g = build(st({ mode: "shape", shape: "house", side: 15, height: 6, spawnProof: true }));
+    const row = buildMaterials(g).items.find((m) => m.id === "minecraft:lantern");
+    return row && row.count === g.lightCount;
+  })());
+
+  ok("欄干は落ちる縁にだけ立つ", (() => {
+    // 5 × 5 の床。縁の 16 マスに立ち、中央の 9 マスには立たない
+    const g = makeGrid(5, 3, 5, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let z = 0; z < 5; z++) for (let x = 0; x < 5; x++) gSetIdx(g, x, 0, z, stone);
+    const r = addRailings(g, "minecraft:oak_fence");
+    let edge = 0, inner = 0;
+    for (let z = 0; z < 5; z++) {
+      for (let x = 0; x < 5; x++) {
+        const e = gBlock(r, x, 1, z);
+        const isFence = e && e.id === "minecraft:oak_fence";
+        if (x === 0 || z === 0 || x === 4 || z === 4) { if (isFence) edge++; }
+        else if (isFence) inner++;
+      }
+    }
+    return edge === 16 && inner === 0;
+  })());
+  ok("欄干は屋内には立たず、屋上の縁にだけ立つ", (() => {
+    // 床・外周の壁・屋根のある部屋。部屋の中に柵が生えては困る
+    const g = makeGrid(5, 5, 5, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let z = 0; z < 5; z++) for (let x = 0; x < 5; x++) gSetIdx(g, x, 0, z, stone);
+    for (let y = 1; y <= 2; y++) {
+      for (let z = 0; z < 5; z++) {
+        for (let x = 0; x < 5; x++) {
+          if (x === 0 || z === 0 || x === 4 || z === 4) gSetIdx(g, x, y, z, stone);
+        }
+      }
+    }
+    for (let z = 0; z < 5; z++) for (let x = 0; x < 5; x++) gSetIdx(g, x, 3, z, stone);
+    const r = addRailings(g, "minecraft:oak_fence");
+    let indoor = 0, roofEdge = 0, roofInner = 0;
+    for (let y = 0; y < r.sy; y++) {
+      for (let z = 0; z < 5; z++) {
+        for (let x = 0; x < 5; x++) {
+          const e = gBlock(r, x, y, z);
+          if (!e || e.id !== "minecraft:oak_fence") continue;
+          if (y < 4) indoor++;
+          else if (x === 0 || z === 0 || x === 4 || z === 4) roofEdge++;
+          else roofInner++;
+        }
+      }
+    }
+    return indoor === 0 && roofInner === 0 && roofEdge === 16;
+  })());
+
+  ok("階段状の屋根の斜面には欄干を立てない", (() => {
+    // 一段ずつ内へ寄る屋根。ここに立てると、斜面じゅうが柵で埋まる
+    const g = makeGrid(9, 5, 3, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let y = 0; y < 4; y++) {
+      for (let z = 0; z < 3; z++) {
+        gSetIdx(g, y, y, z, stone);
+        gSetIdx(g, 8 - y, y, z, stone);
+      }
+    }
+    const r = addRailings(g, "minecraft:oak_fence");
+    let onSlope = 0;
+    for (let y = 0; y < 4; y++) {
+      for (let z = 0; z < r.sz; z++) {
+        for (let x = 0; x < r.sx; x++) {
+          const e = gBlock(r, x, y, z);
+          if (e && e.id === "minecraft:oak_fence") onSlope++;
+        }
+      }
+    }
+    return onSlope === 0;
+  })());
+  ok("幅 1 の背には欄干を立てない", (() => {
+    // 大棟のような 1 マス幅の背。両側が落ちるので、歩ける縁ではない
+    const g = makeGrid(3, 2, 7, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let z = 0; z < 7; z++) gSetIdx(g, 1, 0, z, stone);
+    return countBlocks(addRailings(g, "minecraft:oak_fence")) === countBlocks(g);
+  })());
+  ok("屋上の縁には、上に 1 段足して欄干を立てる", (() => {
+    // 図面のいちばん上が平らな屋根のとき、柵を置く余地がない。1 段足して立てる
+    const g = makeGrid(5, 1, 5, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let z = 0; z < 5; z++) for (let x = 0; x < 5; x++) gSetIdx(g, x, 0, z, stone);
+    const r = addRailings(g, "minecraft:oak_fence");
+    return r.sy === 2 && countLayer(r, 1) === 16;
+  })());
+  ok("上に余裕があるなら段は増やさない", (() => {
+    // 同じ床でも、上に空きがあれば足した段は落とす。無駄に高い図面にしない
+    const g = makeGrid(5, 3, 5, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let z = 0; z < 5; z++) for (let x = 0; x < 5; x++) gSetIdx(g, x, 0, z, stone);
+    const r = addRailings(g, "minecraft:oak_fence");
+    return r.sy === 3 && countLayer(r, 1) === 16;
+  })());
+
+  ok("軒ランタンは張り出しの下に吊る", (() => {
+    // 幅 9 の屋根が、幅 3 の柱から張り出している
+    const g = makeGrid(9, 6, 1, defaultState());
+    const stone = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    for (let x = 0; x < 9; x++) gSetIdx(g, x, 4, 0, stone);
+    for (let y = 0; y < 4; y++) for (let x = 3; x <= 5; x++) gSetIdx(g, x, y, 0, stone);
+    const r = addEaveLanterns(g, "minecraft:lantern", 2);
+    let n = 0, bad = 0;
+    for (let y = 0; y < r.sy; y++) {
+      for (let x = 0; x < r.sx; x++) {
+        const e = gBlock(r, x, y, 0);
+        if (!e || e.id !== "minecraft:lantern") continue;
+        n++;
+        // 真上が屋根で、足元は空いている＝吊り下がっている
+        if (gGet(r, x, y + 1, 0) === K.EMPTY || gGet(r, x, y - 1, 0) !== K.EMPTY) bad++;
+      }
+    }
+    return n > 0 && bad === 0;
+  })());
+  ok("軒ランタンは hanging=true で置かれる", (() => {
+    const g = build(st({ mode: "shape", shape: "house", side: 15, height: 6, eaveLanterns: true }));
+    const e = g.palette.find((p) => p && p.id === "minecraft:lantern");
+    return e && e.props && e.props.hanging === "true";
+  })());
+  ok("装飾を足しても元の図面は変わらない", (() => {
+    // 元のグリッドを書き換えず、写しに置いていること
+    const g = build(st({ mode: "shape", shape: "house", side: 15, height: 6 }));
+    const before = sig(g);
+    addRailings(g, "minecraft:oak_fence");
+    addEaveLanterns(g, "minecraft:lantern", 4);
+    addLights(g, "minecraft:lantern");
+    return sig(g) === before;
+  })());
+  ok("写しは中身も付帯情報も同じ", (() => {
+    const g = build(st({ mode: "landmark", landmark: "goju_no_to" }));
+    const c = cloneGrid(g);
+    return c.sx === g.sx && c.sy === g.sy && c.sz === g.sz &&
+      c.title === g.title && c.landmark === g.landmark &&
+      sig(c) === sig(g) && countBlocks(c) === countBlocks(g);
+  })());
+  ok("読み込んだ図面には装飾も湧き潰しも足さない", (() => {
+    // 人の作った作品に勝手に手を入れない
+    const saved = loadedGrid;
+    try {
+      loadedGrid = build(st({ mode: "shape", shape: "house", side: 15, height: 6 }));
+      const before = sig(loadedGrid);
+      const g = build(st({ mode: "import", spawnProof: true, railings: true, eaveLanterns: true }));
+      return sig(g) === before && g.lightCount == null;
+    } finally { loadedGrid = saved; }
   })());
 
   // --- 結果表示 ---
