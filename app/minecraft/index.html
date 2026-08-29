@@ -167,6 +167,20 @@ legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
 .drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
 .drop b { font-size: 13.5px; }
 .drop span { font-size: 12px; color: var(--muted); }
+.repo-bar { display: flex; gap: 8px; margin-bottom: 6px; }
+.repo-bar input { flex: 1; min-width: 0; }
+.filelist { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.filelist button {
+  display: flex; align-items: baseline; gap: 8px; text-align: left; width: 100%;
+  background: var(--panel); padding: 5px 9px; font-size: 12.5px; border-radius: var(--radius);
+}
+.filelist button:hover { border-color: var(--accent); background: var(--accent-soft); }
+.filelist button[aria-current="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.filelist .fpath { flex: 1; word-break: break-all; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.filelist .fsize { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.filelist .fdir { color: var(--muted); }
+.repo-status { font-size: 12.5px; color: var(--muted); margin: 6px 0; }
+
 .import-info {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 10px 12px; font-size: 12.5px; margin-bottom: 14px;
@@ -332,6 +346,26 @@ pre.code {
         配布サイトから落とした <code>.litematic</code> / <code>.schem</code> / <code>.nbt</code> を
         そのまま図面と材料表にします。ファイルはブラウザの中だけで読み、どこにも送信しません。
       </p>
+      <fieldset>
+        <legend>配布元から選ぶ</legend>
+        <div class="repo-bar">
+          <input type="text" id="repo-input" placeholder="owner/repo または GitHub の URL"
+                 aria-label="リポジトリ" autocomplete="off">
+          <button class="primary" id="btn-open-repo">開く</button>
+        </div>
+        <p class="hint" id="repo-hint">
+          GitHub の公開リポジトリなら、中の <code>.litematic</code> / <code>.schem</code> /
+          <code>.nbt</code> を一覧して選べます。<code>owner/repo@branch</code> でブランチも指定できます。
+          置き場を探すなら
+          <a href="https://github.com/search?q=litematic+schematics&amp;type=repositories"
+             target="_blank" rel="noopener noreferrer">GitHub で検索</a>して、
+          見つけた <code>owner/repo</code> を貼ってください。
+        </p>
+        <div class="chips" id="repo-history"></div>
+        <div id="repo-status"></div>
+        <div class="filelist" id="file-list"></div>
+      </fieldset>
+
       <div class="drop" id="drop" tabindex="0" role="button">
         <b>ここにファイルをドロップ</b>
         <span>またはクリックして選ぶ（.litematic / .schem / .nbt）</span>
@@ -1279,6 +1313,15 @@ function buildBuilding(st) {
 let loadedGrid = null;
 let importError = "";
 
+/**
+ * 一覧の状態。source は "samples"（同梱）か "github"。
+ * items は起動時に同梱サンプルで埋める（SAMPLE_FILES の宣言はこの下なので、ここでは参照できない）。
+ */
+let repoListing = { source: "samples", owner: "", repo: "", ref: "", items: [], truncated: false };
+let repoStatus = "";
+let repoBusy = false;
+let currentPath = "";
+
 function build(st) {
   if (st.mode === "import") {
     // 読み込み前は空のグリッドを返す。描画側は「まだ無い」として扱える
@@ -1607,9 +1650,11 @@ function detectAndParse(root) {
   throw new Error("知らない形式です（.litematic / .schem / .nbt に対応しています）");
 }
 
-/** ファイル 1 つを読んでグリッドにする。失敗は例外で返す */
-async function readSchematic(file) {
-  const raw = new Uint8Array(await file.arrayBuffer());
+/**
+ * バイト列 1 つを読んでグリッドにする。失敗は例外で返す。
+ * ドロップされたファイルも、配布元から取ってきたものも、ここに集まる。
+ */
+async function readSchematicBytes(raw, name) {
   const bytes = isGzip(raw) ? await gunzip(raw) : raw;
   const root = parseNBT(bytes);
   const g = detectAndParse(root);
@@ -1623,9 +1668,148 @@ async function readSchematic(file) {
   }
   if (!countBlocks(g)) throw new Error("空気だけで、ブロックがありません");
 
-  if (!g.title) g.title = file.name;
-  g.fileName = file.name;
+  if (!g.title) g.title = name;
+  g.fileName = name;
   return g;
+}
+
+/** ファイル 1 つを読んでグリッドにする */
+async function readSchematic(file) {
+  return readSchematicBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+}
+
+/* ------------------------------------------------------------------
+   6.5 配布元（GitHub）から選ぶ
+
+   静的ページなので、取りに行けるのは CORS を許している相手だけ。
+   GitHub は API も raw も許しているので、リポジトリの中身を一覧して
+   そのまま読み込める。配布サイト（minecraft-schematics.com など）は
+   CORS を返さず公開 API も無いため、ブラウザからは取得できない。
+   ------------------------------------------------------------------ */
+
+const SCHEM_EXT = [".litematic", ".schem", ".schematic", ".nbt"];
+const GH_API = "https://api.github.com";
+const GH_RAW = "https://raw.githubusercontent.com";
+
+/** 開いた直後から試せるように、このリポジトリの同梱サンプルを最初に出す */
+const SAMPLE_FILES = [
+  { path: "samples/sample-collection-room.litematic", size: 527 },
+  { path: "samples/sample-collection-room.schem", size: 294 },
+  { path: "samples/sample-collection-room.nbt", size: 593 },
+];
+
+/**
+ * 入力をリポジトリの指定に直す。次のどれでも受ける。
+ *   owner/repo
+ *   owner/repo@branch
+ *   https://github.com/owner/repo
+ *   https://github.com/owner/repo/tree/branch/以下は無視
+ */
+function parseRepoInput(text) {
+  let t = String(text || "").trim();
+  if (!t) return null;
+  t = t.replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/\.git$/, "");
+
+  let ref = "";
+  const at = t.indexOf("@");
+  if (at > 0) { ref = t.slice(at + 1).trim(); t = t.slice(0, at); }
+
+  const parts = t.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  const [owner, repo] = parts;
+  if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
+
+  // .../tree/<branch>/... の形なら、そこから枝を拾う
+  if (!ref && parts[2] === "tree" && parts[3]) ref = parts[3];
+  return { owner, repo, ref };
+}
+
+const isSchematicPath = (path) => SCHEM_EXT.some((e) => path.toLowerCase().endsWith(e));
+
+/** ツリーの応答（tree[] と truncated）から、読み込めるファイルだけを取り出す */
+function schematicFilesFromTree(tree) {
+  const items = ((tree && tree.tree) || [])
+    .filter((e) => e.type === "blob" && isSchematicPath(e.path))
+    .map((e) => ({ path: e.path, size: Number(e.size) || 0 }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return { items, truncated: Boolean(tree && tree.truncated) };
+}
+
+function formatSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1024 / 1024).toFixed(1) + " MB";
+}
+
+/** raw の URL。パスに空白や日本語が入っても壊れないよう、区切りを保ったまま符号化する */
+function rawUrl(owner, repo, ref, path) {
+  const enc = String(path).split("/").map(encodeURIComponent).join("/");
+  return GH_RAW + "/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) +
+    "/" + encodeURIComponent(ref) + "/" + enc;
+}
+
+/**
+ * 応答からエラー文を作る。何が起きて次に何をすればよいかまで書く。
+ * 未認証の GitHub API は 1 時間 60 回なので、そこはいちばん丁寧に出す。
+ */
+function githubErrorMessage(res, what) {
+  const remain = res.headers && res.headers.get ? res.headers.get("x-ratelimit-remaining") : null;
+  const reset = res.headers && res.headers.get ? res.headers.get("x-ratelimit-reset") : null;
+  if ((res.status === 403 || res.status === 429) && remain === "0") {
+    let when = "";
+    if (reset) {
+      const d = new Date(Number(reset) * 1000);
+      if (!isNaN(d.getTime())) when = "（" + d.toLocaleTimeString() + " ごろに戻ります）";
+    }
+    return "GitHub API の回数制限に達しました" + when +
+      "。ログインなしでは 1 時間に 60 回までです。時間をおくか、ファイルを直接ドロップしてください。";
+  }
+  if (res.status === 404) {
+    return what + "が見つかりません。リポジトリ名を確認してください。" +
+      "既定以外のブランチなら owner/repo@branch の形で指定できます。";
+  }
+  if (res.status === 401 || res.status === 403) {
+    return what + "を読めません。非公開リポジトリの可能性があります。";
+  }
+  return what + "を取得できませんでした（HTTP " + res.status + "）。";
+}
+
+async function ghJson(url, what) {
+  let res;
+  try {
+    res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  } catch (e) {
+    throw new Error(what + "に接続できませんでした。ネットワークを確認してください。");
+  }
+  if (!res.ok) throw new Error(githubErrorMessage(res, what));
+  return res.json();
+}
+
+/** リポジトリの中の、読み込めるファイル一覧を取る */
+async function listRepoSchematics(spec) {
+  let ref = spec.ref;
+  if (!ref) {
+    const info = await ghJson(GH_API + "/repos/" + spec.owner + "/" + spec.repo, "リポジトリ");
+    ref = info.default_branch || "main";
+  }
+  const tree = await ghJson(
+    GH_API + "/repos/" + spec.owner + "/" + spec.repo + "/git/trees/" + encodeURIComponent(ref) + "?recursive=1",
+    "ファイル一覧");
+  const { items, truncated } = schematicFilesFromTree(tree);
+  return { owner: spec.owner, repo: spec.repo, ref, items, truncated };
+}
+
+/** URL からバイト列を取ってグリッドにする */
+async function loadSchematicUrl(url, name) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    throw new Error("ファイルに接続できませんでした。ネットワークを確認してください。");
+  }
+  if (!res.ok) throw new Error("ファイルを取得できませんでした（HTTP " + res.status + "）。");
+  return readSchematicBytes(new Uint8Array(await res.arrayBuffer()), name);
 }
 
 /* ------------------------------------------------------------------
@@ -2058,6 +2242,79 @@ function renderBuildingInfo() {
       ...row("本体の高さ", d.fh + " × " + d.floors + " 階 = " + d.bodyH + " ブロック"),
     ]),
   ]));
+}
+
+function repoHistory() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY + "/repos");
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((x) => typeof x === "string").slice(0, 8) : [];
+  } catch (e) { return []; }
+}
+
+function rememberRepo(name) {
+  try {
+    const list = [name].concat(repoHistory().filter((x) => x !== name)).slice(0, 8);
+    localStorage.setItem(STORAGE_KEY + "/repos", JSON.stringify(list));
+  } catch (e) { /* 無視 */ }
+}
+
+function renderRepoHistory() {
+  const wrap = $("#repo-history");
+  wrap.textContent = "";
+  wrap.appendChild(h("button", {
+    class: "chip", type: "button", text: "同梱サンプル",
+    onclick: () => {
+      repoListing = { source: "samples", owner: "", repo: "", ref: "", items: SAMPLE_FILES, truncated: false };
+      repoStatus = "";
+      importError = "";
+      renderAll();
+    },
+  }));
+  for (const name of repoHistory()) {
+    wrap.appendChild(h("button", {
+      class: "chip", type: "button", text: name,
+      onclick: () => { $("#repo-input").value = name; openRepo(); },
+    }));
+  }
+}
+
+function renderFileList() {
+  const status = $("#repo-status");
+  status.textContent = "";
+  const list = $("#file-list");
+  list.textContent = "";
+
+  if (repoBusy) {
+    status.appendChild(h("p", { class: "repo-status", text: "読み込んでいます…" }));
+    return;
+  }
+  if (repoStatus) status.appendChild(h("div", { class: "warning warn", text: repoStatus }));
+
+  const L = repoListing;
+  const where = L.source === "samples"
+    ? "同梱サンプル（このアプリに入っているもの）"
+    : L.owner + "/" + L.repo + " @ " + L.ref;
+  status.appendChild(h("p", {
+    class: "repo-status",
+    text: where + " — " + L.items.length + " 件" + (L.truncated ? "（多すぎて途中までです）" : ""),
+  }));
+
+  for (const f of L.items) {
+    const slash = f.path.lastIndexOf("/");
+    const dir = slash < 0 ? "" : f.path.slice(0, slash + 1);
+    const base = slash < 0 ? f.path : f.path.slice(slash + 1);
+    list.appendChild(h("button", {
+      type: "button", "aria-current": String(currentPath === f.path),
+      onclick: () => pickFile(f),
+    }, [
+      h("span", { class: "fpath" }, [
+        dir ? h("span", { class: "fdir", text: dir }) : null,
+        h("span", { text: base }),
+      ]),
+      h("span", { class: "fsize", text: formatSize(f.size) }),
+    ]));
+  }
 }
 
 function renderImportInfo() {
@@ -2608,6 +2865,8 @@ function renderAll() {
   renderParams();
   renderBlocks();
   renderBuilding();
+  renderRepoHistory();
+  renderFileList();
   renderImportInfo();
   renderOutputs();
 }
@@ -2674,6 +2933,58 @@ function setTab(name) {
   renderOutputs();
 }
 
+async function openRepo() {
+  const text = $("#repo-input").value;
+  const spec = parseRepoInput(text);
+  if (!spec) {
+    repoStatus = "リポジトリの指定を読めませんでした。owner/repo の形か、GitHub の URL を入れてください。";
+    renderAll();
+    return;
+  }
+  repoBusy = true;
+  repoStatus = "";
+  renderAll();
+  try {
+    const listing = await listRepoSchematics(spec);
+    repoListing = Object.assign({ source: "github" }, listing);
+    rememberRepo(spec.owner + "/" + spec.repo + (spec.ref ? "@" + spec.ref : ""));
+    if (!listing.items.length) {
+      repoStatus = "このリポジトリには .litematic / .schem / .nbt が見つかりませんでした。";
+    } else if (listing.truncated) {
+      repoStatus = "ファイルが多すぎて一覧が途中までです。目当てのものが無ければ、" +
+        "そのファイルを直接ドロップしてください。";
+    }
+  } catch (e) {
+    repoStatus = e && e.message ? e.message : String(e);
+  }
+  repoBusy = false;
+  renderAll();
+}
+
+/** 一覧から 1 つ選んで読み込む */
+async function pickFile(f) {
+  const L = repoListing;
+  const url = L.source === "samples" ? f.path : rawUrl(L.owner, L.repo, L.ref, f.path);
+  const name = f.path.split("/").pop();
+  currentPath = f.path;
+  importError = "";
+  repoBusy = true;
+  renderAll();
+  try {
+    loadedGrid = await loadSchematicUrl(url, name);
+    layerIndex = 0;
+    elevMode = "project";
+    const sel = $("#elev-mode");
+    if (sel) sel.value = elevMode;
+    toast(name + " を読み込みました");
+  } catch (e) {
+    loadedGrid = null;
+    importError = name + " を読めませんでした: " + (e && e.message ? e.message : String(e));
+  }
+  repoBusy = false;
+  renderAll();
+}
+
 async function loadSchematic(file) {
   importError = "";
   state.mode = "import";
@@ -2681,6 +2992,7 @@ async function loadSchematic(file) {
   try {
     const g = await readSchematic(file);
     loadedGrid = g;
+    currentPath = "";
     layerIndex = 0;
     elevMode = "project";           // 読み込んだ建築は投影のほうが形が分かる
     const sel = $("#elev-mode");
@@ -2743,6 +3055,11 @@ function initEvents() {
       renderAll();
     });
   }
+
+  $("#btn-open-repo").addEventListener("click", openRepo);
+  $("#repo-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { openRepo(); e.preventDefault(); }
+  });
 
   const drop = $("#drop");
   const picker = $("#file-schem");
@@ -3367,6 +3684,103 @@ function runSelfTest() {
     return ids.has("minecraft:dark_oak_planks") || ids.has("minecraft:oak_stairs");
   })());
 
+
+  // --- 17. 配布元（GitHub）から選ぶ ---
+  // ネットワークに触れない部分だけを見る。実際の取得はブラウザでの通し確認で行う。
+  ok("owner/repo を読める", (() => {
+    const r = parseRepoInput("someone/farms");
+    return r && r.owner === "someone" && r.repo === "farms" && !r.ref;
+  })());
+  ok("ブランチ付き（owner/repo@branch）を読める", (() => {
+    const r = parseRepoInput("someone/farms@dev");
+    return r && r.owner === "someone" && r.repo === "farms" && r.ref === "dev";
+  })());
+  ok("GitHub の URL を読める", (() => {
+    const r = parseRepoInput("https://github.com/someone/farms");
+    return r && r.owner === "someone" && r.repo === "farms";
+  })());
+  ok("URL の /tree/<branch> からブランチを拾う", (() => {
+    const r = parseRepoInput("https://github.com/someone/farms/tree/v2/builds");
+    return r && r.ref === "v2";
+  })());
+  ok(".git を落とす、前後の空白を無視する",
+    (parseRepoInput("  someone/farms.git ") || {}).repo === "farms");
+  ok("不正な入力は null", (() => {
+    for (const bad of ["", "   ", "someone", "/", "https://example.com/a/b", "some one/farms"]) {
+      if (parseRepoInput(bad) !== null) return false;
+    }
+    return true;
+  })());
+
+  ok("ツリーから schematic だけを拾う", (() => {
+    const tree = { tree: [
+      { path: "README.md", type: "blob", size: 100 },
+      { path: "farms", type: "tree" },
+      { path: "farms/iron.litematic", type: "blob", size: 12345 },
+      { path: "builds/house.schem", type: "blob", size: 4096 },
+      { path: "old/thing.schematic", type: "blob", size: 10 },
+      { path: "structures/a.nbt", type: "blob", size: 20 },
+      { path: "notes/plan.nbt.txt", type: "blob", size: 20 },
+      { path: "dir.litematic", type: "tree" },
+    ] };
+    const { items, truncated } = schematicFilesFromTree(tree);
+    return items.length === 4 && !truncated &&
+      items[0].path === "builds/house.schem" &&      // パスの昇順
+      items.every((i) => /\.(litematic|schem|schematic|nbt)$/.test(i.path));
+  })());
+  ok("truncated を落とさない", schematicFilesFromTree({ tree: [], truncated: true }).truncated === true);
+  ok("空のツリーでも壊れない", schematicFilesFromTree({}).items.length === 0);
+
+  ok("サイズの表示", formatSize(0) === "" && formatSize(512) === "512 B" &&
+    formatSize(2048) === "2.0 KB" && formatSize(3 * 1024 * 1024) === "3.0 MB");
+
+  ok("raw の URL を組み立てる",
+    rawUrl("someone", "farms", "main", "builds/house.schem") ===
+    "https://raw.githubusercontent.com/someone/farms/main/builds/house.schem");
+  ok("空白や日本語を含むパスでも、区切りを保ったまま符号化する", (() => {
+    const u = rawUrl("a", "b", "main", "建築 集/小屋.litematic");
+    return u.indexOf("/main/") > 0 && !/ /.test(u) &&
+      u.endsWith("/" + encodeURIComponent("建築 集") + "/" + encodeURIComponent("小屋.litematic"));
+  })());
+
+  const fakeRes = (status, headers) => ({ status, headers: { get: (k) => (headers || {})[k.toLowerCase()] || null } });
+  ok("回数制限のときは、上限とリセット時刻を出す", (() => {
+    const msg = githubErrorMessage(fakeRes(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1800000000" }), "リポジトリ");
+    return /回数制限/.test(msg) && /60 回/.test(msg) && /ごろに戻ります/.test(msg);
+  })());
+  ok("残り回数があるときの 403 は、非公開の可能性として出す", (() => {
+    const msg = githubErrorMessage(fakeRes(403, { "x-ratelimit-remaining": "42" }), "リポジトリ");
+    return /非公開/.test(msg) && !/回数制限/.test(msg);
+  })());
+  ok("404 はブランチ指定の案内まで出す", (() => {
+    const msg = githubErrorMessage(fakeRes(404, {}), "リポジトリ");
+    return /見つかりません/.test(msg) && /owner\/repo@branch/.test(msg);
+  })());
+  ok("その他の状態はコードを添えて出す", /HTTP 500/.test(githubErrorMessage(fakeRes(500, {}), "ファイル一覧")));
+
+  ok("同梱サンプルは 3 形式ぶんある", (() => {
+    return SAMPLE_FILES.length === 3 &&
+      SAMPLE_FILES.every((f) => f.path.startsWith("samples/") && isSchematicPath(f.path)) &&
+      new Set(SAMPLE_FILES.map((f) => f.path.split(".").pop())).size === 3;
+  })());
+  ok("拡張子の判定は大文字でも通る",
+    isSchematicPath("A/B.LITEMATIC") && isSchematicPath("x.Schem") && !isSchematicPath("x.png"));
+
+  ok("バイト列からでも同じ図面になる（読み込み口の分解）", (() => {
+    // readSchematic を readSchematicBytes に分けたので、既存フィクスチャが同じ結果になることを見る
+    const g1 = fixGrid("nbt");
+    const bytes = fixBytes(FIX.nbt);
+    const g2 = detectAndParse(parseNBT(bytes));
+    for (let y = 0; y < g1.sy; y++) {
+      for (let z = 0; z < g1.sz; z++) {
+        for (let x = 0; x < g1.sx; x++) {
+          if (blockName(gBlock(g1, x, y, z)) !== blockName(gBlock(g2, x, y, z))) return false;
+        }
+      }
+    }
+    return true;
+  })());
+
   // --- 結果表示 ---
   const passed = results.filter((r) => r.pass).length;
   const failed = results.length - passed;
@@ -3386,6 +3800,7 @@ function init() {
     if (theme) document.documentElement.setAttribute("data-theme", theme);
   } catch (e) { /* 無視 */ }
 
+  repoListing.items = SAMPLE_FILES;
   load();
   applyQuery(location.search);
   initEvents();
