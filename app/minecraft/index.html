@@ -433,6 +433,11 @@ pre.code {
       <div id="params"></div>
     </fieldset>
 
+    <fieldset id="fs-detail">
+      <legend>ディテール</legend>
+      <div id="detail-opts"></div>
+    </fieldset>
+
     <fieldset id="fs-blocks">
       <legend>コマンド出力に使うブロック</legend>
       <div id="blocks"></div>
@@ -613,6 +618,10 @@ function defaultState() {
     bSource: "size",              // "size" = 寸法から / "landmark" = 有名建築から
     landmark: "taj_mahal",
     lmShell: false,
+    // ディテール（素材を混ぜる・外角に柱）。形状ジェネレータでは既定で切っておく
+    detailVariation: true,
+    detailCorners: true,
+    shapeDetail: false,
     lmScale: 0,                   // 0 なら建物ごとの既定スケールを使う
     lmQuery: "",
     // コマンド出力
@@ -1379,6 +1388,167 @@ function buildBuilding(st) {
   return g;
 }
 
+/* ---------- ディテール ----------
+
+   壁一面が同じブロックだと、いかにも生成物という見た目になる。
+   実際に見栄えのする建築がやっていることのうち、図面として意味があるのは次の 2 つ。
+
+     1. 素材を混ぜる … 石レンガの壁に、ひび・苔・安山岩を少し混ぜる
+     2. 面を割る   … 外側の角に縦の柱を立てて、のっぺりした面を分ける
+
+   混ぜ方は位置から決まるハッシュで決めるので、同じ図面なら毎回同じ結果になる。
+   材料表もそのぶん現実的な内訳になる。 */
+
+/** ブロックごとの系統。[ブロック, 重み] の並び。合計は何でもよい */
+const BLOCK_FAMILIES = {
+  "minecraft:stone_bricks": [
+    ["minecraft:stone_bricks", 78], ["minecraft:cracked_stone_bricks", 11],
+    ["minecraft:mossy_stone_bricks", 7], ["minecraft:andesite", 4],
+  ],
+  "minecraft:stone": [
+    ["minecraft:stone", 82], ["minecraft:andesite", 11], ["minecraft:cobblestone", 7],
+  ],
+  "minecraft:cobblestone": [
+    ["minecraft:cobblestone", 82], ["minecraft:mossy_cobblestone", 11], ["minecraft:andesite", 7],
+  ],
+  "minecraft:deepslate_tiles": [
+    ["minecraft:deepslate_tiles", 80], ["minecraft:cracked_deepslate_tiles", 12],
+    ["minecraft:deepslate_bricks", 8],
+  ],
+  "minecraft:sandstone": [
+    ["minecraft:sandstone", 80], ["minecraft:cut_sandstone", 13], ["minecraft:smooth_sandstone", 7],
+  ],
+  "minecraft:smooth_sandstone": [
+    ["minecraft:smooth_sandstone", 82], ["minecraft:cut_sandstone", 12], ["minecraft:sandstone", 6],
+  ],
+  "minecraft:quartz_block": [
+    ["minecraft:quartz_block", 80], ["minecraft:smooth_quartz", 13], ["minecraft:quartz_bricks", 7],
+  ],
+  "minecraft:quartz_bricks": [
+    ["minecraft:quartz_bricks", 82], ["minecraft:quartz_block", 12], ["minecraft:smooth_quartz", 6],
+  ],
+  "minecraft:white_concrete": [
+    ["minecraft:white_concrete", 86], ["minecraft:smooth_quartz", 9], ["minecraft:bone_block", 5],
+  ],
+  // 木材は色差が大きいので、いちばん控えめにする。強く混ぜると屋根が斑に見える
+  "minecraft:oak_planks": [
+    ["minecraft:oak_planks", 88], ["minecraft:stripped_oak_wood", 12],
+  ],
+  "minecraft:spruce_planks": [
+    ["minecraft:spruce_planks", 88], ["minecraft:stripped_spruce_wood", 12],
+  ],
+  "minecraft:dark_oak_planks": [
+    ["minecraft:dark_oak_planks", 88], ["minecraft:dark_oak_log", 12],
+  ],
+  "minecraft:stripped_spruce_wood": [
+    ["minecraft:stripped_spruce_wood", 88], ["minecraft:spruce_planks", 12],
+  ],
+  "minecraft:smooth_quartz": [
+    ["minecraft:smooth_quartz", 84], ["minecraft:quartz_block", 10], ["minecraft:quartz_bricks", 6],
+  ],
+  "minecraft:red_concrete": [
+    ["minecraft:red_concrete", 88], ["minecraft:red_terracotta", 12],
+  ],
+  "minecraft:iron_block": [
+    ["minecraft:iron_block", 84], ["minecraft:light_gray_concrete", 16],
+  ],
+  "minecraft:red_sandstone": [
+    ["minecraft:red_sandstone", 80], ["minecraft:cut_red_sandstone", 13],
+    ["minecraft:smooth_red_sandstone", 7],
+  ],
+};
+
+/** 外角に立てる柱。系統ごとに、少し締まって見えるブロックを選ぶ */
+const CORNER_BLOCKS = {
+  "minecraft:stone_bricks": "minecraft:chiseled_stone_bricks",
+  "minecraft:stone": "minecraft:stone_bricks",
+  "minecraft:cobblestone": "minecraft:stone_bricks",
+  "minecraft:sandstone": "minecraft:chiseled_sandstone",
+  "minecraft:smooth_sandstone": "minecraft:chiseled_sandstone",
+  "minecraft:quartz_block": "minecraft:quartz_pillar",
+  "minecraft:quartz_bricks": "minecraft:quartz_pillar",
+  "minecraft:smooth_quartz": "minecraft:quartz_pillar",
+  "minecraft:white_concrete": "minecraft:quartz_pillar",
+  "minecraft:oak_planks": "minecraft:oak_log",
+  "minecraft:spruce_planks": "minecraft:spruce_log",
+  "minecraft:dark_oak_planks": "minecraft:dark_oak_log",
+  "minecraft:stripped_spruce_wood": "minecraft:spruce_log",
+  "minecraft:deepslate_tiles": "minecraft:chiseled_deepslate",
+  "minecraft:red_concrete": "minecraft:red_terracotta",
+};
+
+/** 位置から決まる 0〜1 の値。乱数を使わないので、同じ図面なら毎回同じ結果になる */
+function hash3(x, y, z) {
+  let h = (x * 374761393 + y * 668265263 + z * 2147483647) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = Math.imul(h, 1274126177) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** その位置で使うブロックを、系統から選ぶ */
+function variantFor(id, x, y, z) {
+  const fam = BLOCK_FAMILIES[id];
+  if (!fam) return id;
+  let total = 0;
+  for (const e of fam) total += e[1];
+  let r = hash3(x, y, z) * total;
+  for (const e of fam) { r -= e[1]; if (r <= 0) return e[0]; }
+  return id;
+}
+
+/**
+ * 図面にディテールを足した、新しいグリッドを返す。元のグリッドは変えない。
+ * opts.variation … 素材を混ぜる
+ * opts.corners   … 外側の角に縦の柱を立てる
+ * 角の判定は「水平の 4 近傍のうち、直交する 2 方向が空いている」。
+ * 箱でも塔でも同じ考え方で拾える。
+ */
+function detailGrid(g, opts) {
+  const o = opts || {};
+  if (!o.variation && !o.corners) return g;
+
+  const out = makeGrid(g.sx, g.sy, g.sz, null);
+  out.source = g.source;
+  out.title = g.title;
+  out.labelX0 = g.labelX0;
+  out.labelZ0 = g.labelZ0;
+  if (g.landmark) { out.landmark = g.landmark; out.scale = g.scale; }
+
+  const at = (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= g.sx || y >= g.sy || z >= g.sz)
+    ? 0 : g.layers[y][z * g.sx + x];
+
+  for (let y = 0; y < g.sy; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        const idx = at(x, y, z);
+        if (!idx) continue;
+        const e = g.palette[idx];
+        // 階段や柱など、意味のあるブロックは触らない
+        if (e.kind === K.STAIR || e.kind === K.PILLAR || e.kind === K.CORNER) {
+          out.layers[y][z * g.sx + x] = paletteIndex(out, e);
+          continue;
+        }
+
+        let id = e.id;
+        const west = at(x - 1, y, z), east = at(x + 1, y, z);
+        const north = at(x, y, z - 1), south = at(x, y, z + 1);
+        const xOpen = !west || !east, zOpen = !north || !south;
+        const tall = at(x, y - 1, z) || at(x, y + 1, z);
+
+        if (o.corners && xOpen && zOpen && tall && CORNER_BLOCKS[id]) {
+          id = CORNER_BLOCKS[id];                      // 外側の角 → 縦の柱
+        } else if (o.variation) {
+          id = variantFor(id, x, y, z);
+        }
+        out.layers[y][z * g.sx + x] = id === e.id
+          ? paletteIndex(out, e)
+          : paletteIndex(out, { id, props: e.props, kind: e.kind, dir: e.dir });
+      }
+    }
+  }
+  return out;
+}
+
 /* ---------- 有名建築のプリセット ----------
 
    世界遺産などの有名な建物を、既存の部品（箱・台形・四角錐・円柱・ドーム・
@@ -1466,6 +1636,165 @@ function pHipRoof(st, block, stairBlock, w, d, run) {
   return buildHip(Object.assign(partSt(st, block, stairBlock), {
     width: w, depth: d, run: Math.max(1, run || 1), stairs: true,
   }));
+}
+
+/**
+ * 反り屋根。和風建築の屋根は、軒に向かってゆるく反る（下ほど勾配が寝る）。
+ * 直線の寄棟だとその感じが出ないので、内側へ入る量を曲線にする。
+ *   inset(y) = half * (1 - (1 - y/H)^p)   p > 1 で、下ほど大きく入る＝下ほど勾配が寝る
+ * さらに軒先の四隅を 1 段持ち上げて、反り上がった隅木に見えるようにする。
+ */
+function pSweptRoof(st, block, stairBlock, w, d, run, o) {
+  const opt = o || {};
+  const W = Math.max(3, w), D = Math.max(3, d);
+  const half = Math.floor(Math.min(W, D) / 2);
+  const H = Math.max(2, Math.ceil(half / Math.max(1, run)));
+  const power = opt.power || 1.7;
+
+  const g = makeGrid(W, H + 1, D, partSt(st, block, stairBlock));
+  const idx = paletteIndex(g, { id: g.blocks.block, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const cornerIdx = paletteIndex(g, { id: g.blocks.block, props: {}, kind: K.CORNER, dir: DIR.NONE });
+  const stairIdx = (dir) => paletteIndex(g, {
+    id: g.blocks.stairBlock, props: { facing: DIR_NAME[dir] }, kind: K.STAIR, dir,
+  });
+
+  const insetAt = (y) => Math.min(half, Math.round(half * (1 - Math.pow(1 - y / H, power))));
+
+  for (let y = 0; y <= H; y++) {
+    const a = insetAt(y);
+    const b = y === H ? half : Math.max(a, insetAt(y + 1) - 1);
+    for (let z = 0; z < D; z++) {
+      for (let x = 0; x < W; x++) {
+        const dw = x, de = W - 1 - x, dn = z, ds = D - 1 - z;
+        const m = Math.min(dw, de, dn, ds);
+        if (m < a || m > b) continue;
+        const xHit = dw === m || de === m;
+        const zHit = dn === m || ds === m;
+        if (xHit && zHit) {
+          g.layers[y][z * W + x] = cornerIdx;
+        } else if ((dw === m && de === m) || (dn === m && ds === m)) {
+          g.layers[y][z * W + x] = idx;
+        } else {
+          const dir = dw === m ? DIR.EAST : de === m ? DIR.WEST : dn === m ? DIR.SOUTH : DIR.NORTH;
+          g.layers[y][z * W + x] = m === b ? stairIdx(dir) : idx;
+        }
+      }
+    }
+  }
+
+  // 軒先の四隅を持ち上げる。ここが反り屋根の見た目をいちばん決める
+  if (opt.upturn !== false && H >= 2) {
+    for (const [cx, cz] of [[0, 0], [W - 1, 0], [0, D - 1], [W - 1, D - 1]]) {
+      const dx = cx === 0 ? 1 : -1, dz = cz === 0 ? 1 : -1;
+      g.layers[0][cz * W + cx] = 0;
+      g.layers[1][cz * W + cx] = cornerIdx;
+      if (!g.layers[1][cz * W + (cx + dx)]) g.layers[1][cz * W + (cx + dx)] = cornerIdx;
+      if (!g.layers[1][(cz + dz) * W + cx]) g.layers[1][(cz + dz) * W + cx] = cornerIdx;
+    }
+  }
+  return g;
+}
+
+/**
+ * 玉ねぎドーム。半球だとタージ・マハルらしくならない。
+ * 首がすこし締まってから膨らみ、上で細く尖る形を、制御点で作る。
+ */
+const ONION_PROFILE = [
+  [0, 0.86], [0.16, 1.0], [0.34, 0.97], [0.52, 0.84],
+  [0.68, 0.64], [0.82, 0.42], [0.92, 0.24], [1, 0.08],
+];
+
+function onionRadius(t) {
+  const c = ONION_PROFILE;
+  const u = Math.max(0, Math.min(1, t));
+  for (let i = 1; i < c.length; i++) {
+    if (u <= c[i][0]) {
+      const t0 = c[i - 1][0], r0 = c[i - 1][1], t1 = c[i][0], r1 = c[i][1];
+      const f = t1 === t0 ? 0 : (u - t0) / (t1 - t0);
+      return r0 + (r1 - r0) * f;
+    }
+  }
+  return c[c.length - 1][1];
+}
+
+function pOnionDome(st, block, r, h, o) {
+  const opt = o || {};
+  const R = Math.max(1, r), H = Math.max(2, h);
+  const n = 2 * R + 1;
+  const g = makeGrid(n, H, n, partSt(st, block));
+  const idx = paletteIndex(g, { id: g.blocks.block, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const c = (n - 1) / 2;
+  for (let y = 0; y < H; y++) {
+    const ax = Math.max(0.5, onionRadius(y / (H - 1)) * R + 0.5);
+    const inner = opt.hollow ? Math.max(0, ax - Math.max(1, opt.wall || 1)) : 0;
+    for (let z = 0; z < n; z++) {
+      for (let x = 0; x < n; x++) {
+        const dx = (x - c) / ax, dz = (z - c) / ax;
+        if (dx * dx + dz * dz > 1) continue;
+        if (inner > 0) {
+          const ix = (x - c) / inner, iz = (z - c) / inner;
+          if (ix * ix + iz * iz <= 1) continue;
+        }
+        g.layers[y][z * n + x] = idx;
+      }
+    }
+  }
+  return g;
+}
+
+/** 2 点を結ぶ線にブロックを置く。鉄塔の筋交いに使う */
+function lineBlocks(g, idx, x0, y0, z0, x1, y1, z1) {
+  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0));
+  for (let i = 0; i <= steps; i++) {
+    const t = steps === 0 ? 0 : i / steps;
+    gSetIdx(g,
+      Math.round(x0 + (x1 - x0) * t),
+      Math.round(y0 + (y1 - y0) * t),
+      Math.round(z0 + (z1 - z0) * t), idx);
+  }
+}
+
+/**
+ * 鉄塔の脚と筋交い。柱 4 本だけだと、ただの棒にしか見えない。
+ * legAt(y) は、その高さでの脚の位置（中心からの距離）を返す関数。
+ */
+function pLattice(st, block, H, legAt, o) {
+  const opt = o || {};
+  const half0 = Math.max(1, legAt(0));
+  const n = 2 * half0 + 1;
+  const g = makeGrid(n, Math.max(2, H), n, partSt(st, block));
+  const c = half0;
+  const idx = paletteIndex(g, { id: g.blocks.block, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const legW = Math.max(1, opt.legW || 1);
+
+  const corners = (y) => {
+    const h = Math.max(0, legAt(y));
+    return [[c - h, c - h], [c + h, c - h], [c - h, c + h], [c + h, c + h]];
+  };
+
+  for (let y = 0; y < g.sy; y++) {
+    for (const pt of corners(y)) {
+      for (let ax = 0; ax < legW; ax++) {
+        for (let az = 0; az < legW; az++) {
+          gSetIdx(g, pt[0] + ax - (legW >> 1), y, pt[1] + az - (legW >> 1), idx);
+        }
+      }
+    }
+  }
+
+  // 筋交い。隣り合う脚のあいだに X を入れ、その高さに水平の帯を回す
+  const band = Math.max(3, opt.band || Math.round(g.sy / 8));
+  for (let y0 = 0; y0 + band < g.sy; y0 += band) {
+    const y1 = y0 + band;
+    const a = corners(y0), b = corners(y1);
+    for (const pair of [[0, 1], [1, 3], [3, 2], [2, 0]]) {
+      const i = pair[0], j = pair[1];
+      lineBlocks(g, idx, a[i][0], y0, a[i][1], b[j][0], y1, b[j][1]);
+      lineBlocks(g, idx, a[j][0], y0, a[j][1], b[i][0], y1, b[i][1]);
+      lineBlocks(g, idx, b[i][0], y1, b[i][1], b[j][0], y1, b[j][1]);
+    }
+  }
+  return g;
 }
 
 /**
@@ -1581,9 +1910,9 @@ const LANDMARKS = {
         const th = Math.max(2, c.m(3));
         out.push(mid(pBox(c.st, "minecraft:white_concrete", w, th, d, { hollow: true, wall: 1 }), y));
         y += th;
-        // 城の屋根は幅のわりに低い。勾配 3（3 ブロック内側へ入って 1 段上がる）
-        const roof = pHipRoof(c.st, "minecraft:deepslate_tiles", "minecraft:deepslate_tile_stairs",
-          w + 4, d + 4, 3);
+        // 城の屋根は幅のわりに低く、軒に向かって反る
+        const roof = pSweptRoof(c.st, "minecraft:deepslate_tiles", "minecraft:deepslate_tile_stairs",
+          w + 4, d + 4, 3, { power: 1.6 });
         out.push(mid(roof, y));
         y += Math.max(1, roof.sy - 1);
         w = Math.max(3, w - c.m(2.5)); d = Math.max(3, d - c.m(2.5));
@@ -1605,8 +1934,9 @@ const LANDMARKS = {
         out.push(mid(pBox(c.st, "minecraft:stripped_spruce_wood", w, th, w, { hollow: true, wall: 1 }), y));
         y += th;
         const eaves = w + c.m(3);
-        // 塔の屋根は深い軒。低く広く出すため勾配 2
-        const roof = pHipRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs", eaves, eaves, 2);
+        // 塔の屋根は深い軒で、隅がはっきり反り上がる
+        const roof = pSweptRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs",
+          eaves, eaves, 2, { power: 1.9 });
         out.push(mid(roof, y));
         y += Math.max(1, roof.sy - 1);
         w = Math.max(3, w - Math.max(1, c.m(0.8)));
@@ -1656,14 +1986,19 @@ const LANDMARKS = {
       const w = c.m(57), d = c.m(50);
       out.push(mid(pBox(c.st, "minecraft:stone_bricks", w + c.m(3), Math.max(1, c.m(2)), d + c.m(3)), 0));
       let y = Math.max(1, c.m(2));
-      out.push(mid(pBox(c.st, "minecraft:spruce_planks", w, c.m(12), d, { hollow: true, wall: 1 }), y));
-      y += c.m(12);
-      const lower = pHipRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs", w + c.m(4), d + c.m(4), 2);
-      out.push(mid(lower, y));                            // 裳階
-      y += Math.max(2, Math.round(lower.sy * 0.35));
-      out.push(mid(pBox(c.st, "minecraft:spruce_planks", w - c.m(8), c.m(8), d - c.m(8), { hollow: true, wall: 1 }), y));
-      y += c.m(8);
-      out.push(mid(pHipRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs", w, d, 1), y));
+      // 身舎。実物は柱が高いので、屋根に負けないだけの高さを取る
+      out.push(mid(pBox(c.st, "minecraft:spruce_planks", w, c.m(20), d, { hollow: true, wall: 1 }), y));
+      y += c.m(20);
+      // 裳階（下屋根）。ぐるりと回る庇なので、浅く短く
+      const lower = pSweptRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs",
+        w + c.m(4), d + c.m(4), 4, { power: 1.6 });
+      out.push(mid(lower, y));
+      y += Math.max(2, Math.round(lower.sy * 0.4));
+      out.push(mid(pBox(c.st, "minecraft:spruce_planks", w - c.m(6), c.m(7), d - c.m(6), { hollow: true, wall: 1 }), y));
+      y += c.m(7);
+      // 大屋根。勾配 3 で、幅のわりに高くなりすぎないようにする
+      out.push(mid(pSweptRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs",
+        w, d, 3, { power: 1.7 }), y));
       return out;
     },
   },
@@ -1675,7 +2010,10 @@ const LANDMARKS = {
     parts: (c) => {
       const out = [];
       const plinth = c.m(95), body = c.m(57);
-      out.push(mid(pBox(c.st, "minecraft:quartz_bricks", plinth, Math.max(1, c.m(6)), plinth), 0));
+      // いちばん下は赤砂岩。白一色だと立体が読めないうえ、実物も基壇まわりは赤砂岩
+      out.push(mid(pBox(c.st, "minecraft:red_sandstone", plinth, Math.max(1, c.m(3)), plinth), 0));
+      out.push(mid(pBox(c.st, "minecraft:quartz_bricks", plinth - c.m(4), Math.max(1, c.m(3)),
+        plinth - c.m(4)), Math.max(1, c.m(3))));
       let y = Math.max(1, c.m(6));
       out.push(mid(pBox(c.st, "minecraft:quartz_block", body, c.m(34), body, { hollow: true, wall: 2 }), y));
       // 四面の大アーチをくり抜く
@@ -1690,8 +2028,9 @@ const LANDMARKS = {
       const drumR = Math.max(2, Math.round(c.m(17) / 2));
       out.push(mid(pColumn(c.st, "minecraft:quartz_block", drumR, c.m(9)), y));
       y += c.m(9);
-      out.push(mid(pDome(c.st, "minecraft:quartz_block", drumR, Math.round(drumR * 1.6)), y));
-      const domeTop = y + Math.round(drumR * 1.6);
+      const domeH = Math.round(drumR * 2.1);
+      out.push(mid(pOnionDome(c.st, "minecraft:quartz_block", drumR, domeH), y));
+      const domeTop = y + domeH;
       out.push(mid(pColumn(c.st, "minecraft:gold_block", 0, Math.max(2, c.m(5))), domeTop));
       // 四隅の小ドーム
       const off = Math.floor(body / 2) - c.m(9);
@@ -1700,7 +2039,8 @@ const LANDMARKS = {
           const r = Math.max(2, Math.round(c.m(7) / 2));
           const base = Math.max(1, c.m(6)) + c.m(34) + 1;
           out.push(mid(pColumn(c.st, "minecraft:quartz_block", r, c.m(4)), base, sx, sz));
-          out.push(mid(pDome(c.st, "minecraft:quartz_block", r, r), base + c.m(4), sx, sz));
+          out.push(mid(pOnionDome(c.st, "minecraft:quartz_block", r, Math.max(3, Math.round(r * 2))),
+            base + c.m(4), sx, sz));
         }
       }
       // 四本のミナレット
@@ -1709,7 +2049,8 @@ const LANDMARKS = {
         for (const sz of [-mo, mo]) {
           const r = Math.max(1, Math.round(c.m(4) / 2));
           out.push(mid(pColumn(c.st, "minecraft:quartz_block", r, c.m(41)), Math.max(1, c.m(6)), sx, sz));
-          out.push(mid(pDome(c.st, "minecraft:quartz_block", r + 1, r + 1), Math.max(1, c.m(6)) + c.m(41), sx, sz));
+          out.push(mid(pOnionDome(c.st, "minecraft:quartz_block", r + 1, Math.max(3, (r + 1) * 2)),
+            Math.max(1, c.m(6)) + c.m(41), sx, sz));
         }
       }
       return out;
@@ -1773,20 +2114,12 @@ const LANDMARKS = {
     parts: (c) => {
       const out = [];
       const H = c.m(330), half0 = Math.round(c.m(125) / 2), legW = Math.max(1, c.m(6));
-      // 脚。上に行くほど内側へ寄る（実物の曲線に近づけて 2 乗で寄せる）
-      const steps = Math.max(8, Math.round(H));
-      for (let i = 0; i < steps; i++) {
-        const t = i / (steps - 1);
-        const off = Math.round(half0 * Math.pow(1 - t, 2));
-        if (off <= 0) break;
-        for (const sx of [-off, off]) {
-          for (const sz of [-off, off]) {
-            out.push(mid(pBox(c.st, "minecraft:iron_block", legW, 1, legW), i, sx, sz));
-          }
-        }
-      }
-      // 塔身（脚が集まったあと）と展望台
       const shaftFrom = Math.round(H * 0.55);
+      // 脚は上に行くほど内側へ寄る（実物の曲線に近づけて 2 乗で寄せる）。
+      // 柱 4 本だけだと棒に見えるので、筋交いを入れて格子にする
+      const legAt = (y) => Math.max(1, Math.round(half0 * Math.pow(1 - y / H, 2)));
+      out.push(mid(pLattice(c.st, "minecraft:iron_block", shaftFrom, legAt,
+        { legW, band: Math.max(4, Math.round(H / 14)) }), 0));
       out.push(mid(pBox(c.st, "minecraft:iron_block", Math.max(3, c.m(20)), H - shaftFrom, Math.max(3, c.m(20)),
         { hollow: true, wall: 1 }), shaftFrom));
       for (const [hm, wm] of [[57, 65], [115, 40], [276, 20]]) {
@@ -1805,18 +2138,16 @@ const LANDMARKS = {
     parts: (c) => {
       const out = [];
       const H = c.m(333), half0 = Math.round(c.m(88) / 2), legW = Math.max(1, c.m(5));
-      const band = Math.max(2, Math.round(H / 14));
-      const steps = Math.max(8, Math.round(H));
-      for (let i = 0; i < steps; i++) {
-        const t = i / (steps - 1);
-        const off = Math.round(half0 * Math.pow(1 - t, 1.6));
-        if (off <= 0) break;
-        const block = Math.floor(i / band) % 2 === 0 ? "minecraft:red_concrete" : "minecraft:white_concrete";
-        for (const sx of [-off, off]) {
-          for (const sz of [-off, off]) out.push(mid(pBox(c.st, block, legW, 1, legW), i, sx, sz));
-        }
-      }
+      const band = Math.max(3, Math.round(H / 14));
       const shaftFrom = Math.round(H * 0.45);
+      const legAt = (y) => Math.max(1, Math.round(half0 * Math.pow(1 - y / H, 1.6)));
+      // 赤と白の塗り分けは、格子を帯ごとに 2 本に分けて重ねることで出す
+      for (let i = 0; i * band < shaftFrom; i++) {
+        const y0 = i * band, h = Math.min(band, shaftFrom - y0);
+        if (h < 2) break;
+        const block = i % 2 === 0 ? "minecraft:red_concrete" : "minecraft:white_concrete";
+        out.push(mid(pLattice(c.st, block, h, (y) => legAt(y0 + y), { legW, band: Math.max(3, h - 1) }), y0));
+      }
       out.push(mid(pBox(c.st, "minecraft:red_concrete", Math.max(3, c.m(14)), H - shaftFrom, Math.max(3, c.m(14)),
         { hollow: true, wall: 1 }), shaftFrom));
       out.push(mid(pBox(c.st, "minecraft:white_concrete", c.m(24), Math.max(2, c.m(9)), c.m(24),
@@ -1850,7 +2181,12 @@ const LANDMARKS = {
         }
       }
       out.push(carve(mid(rotated, 0)));
-      // 屋根の縁取り
+      // 基壇・軒蛇腹・アティック。のっぺりした壁のままだと石の塊にしか見えない
+      out.push(mid(pBox(c.st, "minecraft:cut_sandstone", w + 2, Math.max(1, c.m(2)), d + 2), 0));
+      const corniceY = h - Math.max(2, c.m(6));
+      out.push(mid(pBox(c.st, "minecraft:cut_sandstone", w + 2, Math.max(1, c.m(2)), d + 2), corniceY));
+      out.push(mid(pBox(c.st, "minecraft:smooth_sandstone", w - c.m(2), Math.max(1, c.m(3)),
+        d - c.m(2)), corniceY + Math.max(1, c.m(2))));
       out.push(mid(pBox(c.st, "minecraft:sandstone", w + 2, Math.max(1, c.m(2)), d + 2), h));
       return out;
     },
@@ -1936,16 +2272,27 @@ let repoStatus = "";
 let repoBusy = false;
 let currentPath = "";
 
+/** ディテールを足すかどうか。形から作るときは、素の形が見たいので既定で切る */
+function detailOptions(st) {
+  if (st.mode === "import") return null;                     // 読み込んだものは触らない
+  if (st.mode === "shape" && !st.shapeDetail) return null;
+  return { variation: st.detailVariation, corners: st.detailCorners };
+}
+
 function build(st) {
   if (st.mode === "import") {
     // 読み込み前は空のグリッドを返す。描画側は「まだ無い」として扱える
     return loadedGrid || makeGrid(1, 1, 1, st);
   }
+  let g;
   if (st.mode === "building") {
-    return st.bSource === "landmark" ? buildLandmark(st) : buildBuilding(st);
+    g = st.bSource === "landmark" ? buildLandmark(st) : buildBuilding(st);
+  } else {
+    const shape = SHAPES[st.shape] ? st.shape : "sphere";
+    g = SHAPES[shape].build(st);
   }
-  const shape = SHAPES[st.shape] ? st.shape : "sphere";
-  return SHAPES[shape].build(st);
+  const detail = detailOptions(st);
+  return detail ? detailGrid(g, detail) : g;
 }
 
 /* ------------------------------------------------------------------
@@ -3118,6 +3465,38 @@ function renderParams() {
   }
 }
 
+/**
+ * ディテールの切り替え。形から作るときは素の形が見たいので、
+ * まとめて入り切りできる 1 つのスイッチを先に置く。
+ */
+function renderDetail() {
+  const wrap = $("#detail-opts");
+  wrap.textContent = "";
+  $("#fs-detail").hidden = state.mode === "import";
+  if (state.mode === "import") return;
+
+  const sw = (key, label, hint) => {
+    const id = "d-" + key;
+    const row = h("div", { class: "sw" }, [
+      h("input", {
+        type: "checkbox", id, checked: Boolean(state[key]),
+        onchange: (e) => { state[key] = e.target.checked; renderAll(); },
+      }),
+      h("label", { for: id, text: label }),
+    ]);
+    wrap.appendChild(row);
+    if (hint) wrap.appendChild(h("p", { class: "hint", style: "margin:-6px 0 8px 24px", text: hint }));
+  };
+
+  if (state.mode === "shape") {
+    sw("shapeDetail", "ディテールを足す",
+      "形の確認をしたいときは切ったままにしてください");
+    if (!state.shapeDetail) return;
+  }
+  sw("detailVariation", "素材を混ぜる", "石レンガにひび・苔を少し混ぜます。材料表にも反映されます");
+  sw("detailCorners", "外角に柱を立てる", "のっぺりした壁面を、角の柱で分けます");
+}
+
 function renderBlocks() {
   const wrap = $("#blocks");
   wrap.textContent = "";
@@ -3191,7 +3570,8 @@ const BLOCK_COLORS = {
   obsidian: "#120f1c", crying_obsidian: "#1f0f3b", bedrock: "#565656",
   dirt: "#87613f", coarse_dirt: "#7b5a3a", rooted_dirt: "#916b4e",
   grass_block: "#7bb33a", podzol: "#5b3d1f", mycelium: "#6f6265",
-  sand: "#dbd3a0", red_sand: "#b0561e", sandstone: "#d9d2a5", red_sandstone: "#b0561e",
+  sand: "#dbd3a0", red_sand: "#b0561e", sandstone: "#d9d2a5", red_sandstone: "#a8552a",
+  cut_red_sandstone: "#a8552a", smooth_red_sandstone: "#ad5a2e",
   gravel: "#84807f", clay: "#a0a7b4", terracotta: "#985e43",
   snow_block: "#f0fafa", ice: "#7ea9f7", packed_ice: "#7ba4f7", blue_ice: "#74a7fa",
   glass: "#adcfe0", glass_pane: "#adcfe0", tinted_glass: "#3a3540",
@@ -3211,6 +3591,12 @@ const BLOCK_COLORS = {
   repeater: "#b6b0aa", comparator: "#b6b0aa", target: "#ded3c8", lever: "#8b6c43",
   note_block: "#6b4b2c", tnt: "#c8402c", slime_block: "#77c25a", honey_block: "#f9a824",
   rail: "#9a8b6e", powered_rail: "#c6902b", detector_rail: "#a08a6a", activator_rail: "#8a6a52",
+  iron_bars: "#8d8d8d", chain: "#4a4a52", light_gray_concrete: "#9d9d97",
+  bone_block: "#e5e0d1", chiseled_stone_bricks: "#787878", cracked_stone_bricks: "#767470",
+  chiseled_sandstone: "#d5cea2", cut_sandstone: "#d9d2a5", chiseled_deepslate: "#3f3f43",
+  cracked_deepslate_tiles: "#454547", deepslate_tile_stairs: "#474749", quartz_stairs: "#eae5dd",
+  red_terracotta: "#8f3d31", oak_log: "#9a7b4f", spruce_log: "#5b452a", dark_oak_log: "#3b2a17",
+  stripped_oak_wood: "#b89465",
   torch: "#f2c86e", lantern: "#f0b05a", soul_lantern: "#4fd1c0", campfire: "#c8752c",
   ladder: "#8b6c43", scaffolding: "#c8a86a", string: "#d5d5d5", tripwire: "#d5d5d5",
   cobweb: "#e4e9ea", vine: "#4e7a2b", moss_block: "#5b7a34", sculk: "#0f2b31",
@@ -3827,6 +4213,7 @@ function renderAll() {
   renderShapes();
   renderParams();
   renderBlocks();
+  renderDetail();
   renderBuilding();
   renderRepoHistory();
   renderFileList();
@@ -5031,6 +5418,143 @@ function runSelfTest() {
     return viewLabel(0, 89) === "真上から" && viewLabel(0, -89) === "真下から" &&
       /南から/.test(viewLabel(0, 0)) && /水平/.test(viewLabel(0, 0)) &&
       /見下ろし/.test(viewLabel(45, 30));
+  })());
+
+
+  // --- 20. ディテール ---
+  const plainWall = pBox(defaultState(), "minecraft:stone_bricks", 9, 6, 9, { hollow: true, wall: 1 });
+
+  ok("素材を混ぜると、種類が増えて総数は変わらない", (() => {
+    const mixed = detailGrid(plainWall, { variation: true });
+    return countBlocks(mixed) === countBlocks(plainWall) &&
+      buildMaterials(mixed).items.length > buildMaterials(plainWall).items.length;
+  })());
+  ok("混ぜても、元のブロックが多数派のまま", (() => {
+    const mixed = detailGrid(plainWall, { variation: true });
+    const items = buildMaterials(mixed).items;
+    return items[0].id === "minecraft:stone_bricks" &&
+      items[0].count > countBlocks(mixed) * 0.6;
+  })());
+  ok("同じ図面なら毎回同じ結果になる（乱数を使っていない）", (() => {
+    const a = detailGrid(plainWall, { variation: true });
+    const b = detailGrid(plainWall, { variation: true });
+    for (let y = 0; y < a.sy; y++) {
+      for (let z = 0; z < a.sz; z++) {
+        for (let x = 0; x < a.sx; x++) {
+          if (blockName(gBlock(a, x, y, z)) !== blockName(gBlock(b, x, y, z))) return false;
+        }
+      }
+    }
+    return true;
+  })());
+  ok("系統に無いブロックは触らない", (() => {
+    const g = pBox(defaultState(), "minecraft:glowstone", 5, 3, 5, {});
+    const mixed = detailGrid(g, { variation: true });
+    return buildMaterials(mixed).items.length === 1;
+  })());
+
+  ok("外角に柱が立つ", (() => {
+    const g = detailGrid(plainWall, { corners: true });
+    // 角（0,0）は柱、辺の途中（4,0）は元のまま
+    return gBlock(g, 0, 2, 0).id === "minecraft:chiseled_stone_bricks" &&
+      gBlock(g, 4, 2, 0).id === "minecraft:stone_bricks";
+  })());
+  ok("柱は上下につながっているところだけ", (() => {
+    // 高さ 1 の板には柱を立てない（縦のラインにならないため）
+    const flat = pBox(defaultState(), "minecraft:stone_bricks", 5, 1, 5, {});
+    const g = detailGrid(flat, { corners: true });
+    return gBlock(g, 0, 0, 0).id === "minecraft:stone_bricks";
+  })());
+  ok("階段や柱には手を出さない", (() => {
+    const roof = pSweptRoof(defaultState(), "minecraft:stone_bricks", "minecraft:stone_brick_stairs", 9, 9, 2);
+    const before = countKind(roof, K.STAIR);
+    const after = countKind(detailGrid(roof, { variation: true, corners: true }), K.STAIR);
+    return before > 0 && before === after;
+  })());
+  ok("何も指定しなければ元のグリッドをそのまま返す",
+    detailGrid(plainWall, {}) === plainWall && detailGrid(plainWall, null) === plainWall);
+  ok("形から作るときは既定でディテールが付かない", (() => {
+    const st1 = st({ mode: "shape", shape: "cylinder", rx: 6, rz: 6, height: 4, hollow: true });
+    return buildMaterials(build(st1)).items.length === 1;
+  })());
+  ok("スイッチを入れれば形状にも付く", (() => {
+    const st2 = st({ mode: "shape", shape: "cylinder", rx: 6, rz: 6, height: 4, hollow: true,
+                     shapeDetail: true, detailVariation: true, block: "minecraft:stone_bricks" });
+    return buildMaterials(build(st2)).items.length > 1;
+  })());
+  ok("読み込んだ図面には手を出さない", detailOptions(st({ mode: "import" })) === null);
+
+  // --- 21. 形の作り込み ---
+  ok("反り屋根は下ほど勾配が寝る", (() => {
+    // 各段で内側へ入る量が、下ほど大きい（＝下ほど勾配が寝る）
+    const roof = pSweptRoof(defaultState(), "minecraft:stone_bricks", "minecraft:stone_brick_stairs", 21, 21, 2);
+    const widthAt = (y) => {
+      let n = 0;
+      for (let x = 0; x < roof.sx; x++) if (gGet(roof, x, y, Math.floor(roof.sz / 2))) n++;
+      return n;
+    };
+    const d1 = widthAt(1) - widthAt(2), d2 = widthAt(roof.sy - 3) - widthAt(roof.sy - 2);
+    return d1 >= d2;
+  })());
+  ok("反り屋根は軒先の隅が持ち上がる", (() => {
+    const roof = pSweptRoof(defaultState(), "minecraft:stone_bricks", "minecraft:stone_brick_stairs", 15, 15, 2);
+    // 最下段の四隅は空き、その 1 段上に載る
+    return gGet(roof, 0, 0, 0) === K.EMPTY && gGet(roof, 0, 1, 0) !== K.EMPTY;
+  })());
+  ok("反り屋根も上に行くほど狭くなる", (() => {
+    const roof = pSweptRoof(defaultState(), "minecraft:stone_bricks", "minecraft:stone_brick_stairs", 15, 15, 2);
+    return countLayer(roof, 1) > countLayer(roof, roof.sy - 1);
+  })());
+
+  ok("玉ねぎドームは途中がいちばん太い", (() => {
+    // 半球なら最下段が最大。玉ねぎは少し上で膨らむ
+    const dome = pOnionDome(defaultState(), "minecraft:quartz_block", 8, 18);
+    let best = 0, bestY = -1;
+    for (let y = 0; y < dome.sy; y++) {
+      const n = countLayer(dome, y);
+      if (n > best) { best = n; bestY = y; }
+    }
+    return bestY > 0 && bestY < dome.sy / 2;
+  })());
+  ok("玉ねぎドームは首が締まって、上で細くなる", (() => {
+    const dome = pOnionDome(defaultState(), "minecraft:quartz_block", 8, 18);
+    return countLayer(dome, 0) < countLayer(dome, 3) &&
+      countLayer(dome, dome.sy - 1) < countLayer(dome, 0);
+  })());
+  ok("玉ねぎの輪郭は 0〜1 に収まる", (() => {
+    for (let i = 0; i <= 20; i++) {
+      const r = onionRadius(i / 20);
+      if (!(r > 0 && r <= 1)) return false;
+    }
+    // 範囲外は端の値に丸める（浮動小数の誤差があるので厳密比較はしない）
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    return near(onionRadius(-1), ONION_PROFILE[0][1]) &&
+      near(onionRadius(2), ONION_PROFILE[ONION_PROFILE.length - 1][1]);
+  })());
+
+  ok("鉄塔は脚だけでなく筋交いが入る", (() => {
+    const legAt = (y) => Math.max(1, Math.round(20 * Math.pow(1 - y / 60, 2)));
+    const solid = pLattice(defaultState(), "minecraft:iron_block", 60, legAt, { legW: 1, band: 1000 });
+    const braced = pLattice(defaultState(), "minecraft:iron_block", 60, legAt, { legW: 1, band: 8 });
+    return countBlocks(braced) > countBlocks(solid) * 1.3;
+  })());
+  ok("鉄塔の脚は上に行くほど内側へ寄る", (() => {
+    const legAt = (y) => Math.max(1, Math.round(20 * Math.pow(1 - y / 60, 2)));
+    const g = pLattice(defaultState(), "minecraft:iron_block", 60, legAt, { legW: 1, band: 1000 });
+    const spread = (y) => {
+      let min = 999, max = -1;
+      for (let z = 0; z < g.sz; z++) for (let x = 0; x < g.sx; x++) {
+        if (gGet(g, x, y, z)) { min = Math.min(min, x); max = Math.max(max, x); }
+      }
+      return max - min;
+    };
+    return spread(0) > spread(30) && spread(30) > spread(55);
+  })());
+  ok("線を引くと両端が必ず埋まる", (() => {
+    const g = makeGrid(12, 12, 12, defaultState());
+    const idx = paletteIndex(g, { id: "minecraft:stone", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+    lineBlocks(g, idx, 1, 1, 1, 10, 9, 4);
+    return gGet(g, 1, 1, 1) !== K.EMPTY && gGet(g, 10, 9, 4) !== K.EMPTY;
   })());
 
   // --- 結果表示 ---
