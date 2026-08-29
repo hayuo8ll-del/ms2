@@ -477,18 +477,33 @@ pre.code {
 
     <div class="tabpanel" id="tab-iso">
       <div class="planbar">
-        <button class="mini" id="iso-left" title="左に回す">◀ 回す</button>
-        <button class="mini" id="iso-right" title="右に回す">回す ▶</button>
+        <label class="iso-ctl">左右
+          <input type="range" id="iso-yaw" min="0" max="359" value="45">
+        </label>
+        <label class="iso-ctl">上下
+          <input type="range" id="iso-pitch" min="-89" max="89" value="30">
+        </label>
         <label class="iso-ctl">積み上げ
           <input type="range" id="iso-height" min="1" max="1" value="1">
         </label>
         <label class="iso-ctl">大きさ
-          <input type="range" id="iso-zoom" min="2" max="16" value="6">
+          <input type="range" id="iso-zoom" min="2" max="20" value="6">
         </label>
+      </div>
+      <div class="planbar">
+        <span class="iso-ctl">視点</span>
+        <button class="mini" data-view="45,30">斜め上</button>
+        <button class="mini" data-view="0,0">正面</button>
+        <button class="mini" data-view="90,0">横</button>
+        <button class="mini" data-view="0,89">真上</button>
+        <button class="mini" data-view="0,-60">下から</button>
+        <button class="mini" id="iso-spin">90° 回す</button>
+        <div class="spacer" style="flex:1"></div>
         <button class="mini" id="iso-png">PNG 保存</button>
       </div>
       <p class="readout" id="iso-status"></p>
-      <div class="canvaswrap"><canvas id="iso"></canvas></div>
+      <div class="canvaswrap"><canvas id="iso" style="cursor:grab; touch-action:none"></canvas></div>
+      <p class="hint">図の上をドラッグしても回せます。</p>
     </div>
 
     <div class="tabpanel" id="tab-sheet">
@@ -609,9 +624,11 @@ function defaultState() {
 let state = defaultState();
 let layerIndex = 0;
 let elevMode = "section";
-let isoRot = 0;                 // 0〜3。90 度ずつ回す
+let isoYaw = 45;                // 左右の回転（度）
+let isoPitch = 30;              // 上下。+ が見下ろし、- が見上げ
 let isoHeight = 0;              // 0 なら全部（完成状態）
 let isoZoom = 6;
+let isoQuick = false;           // ドラッグ中は陰影を省いて軽くする
 let activeTab = "plan";
 
 /* ------------------------------------------------------------------
@@ -3253,63 +3270,180 @@ function blockColor(entry, g) {
   return col;
 }
 
-/* ---------- 完成イメージ（等角投影） ----------
+/* ---------- 完成イメージ（3D ビュー） ----------
 
-   平面図と立面図だけだと、積み上がった姿が分からない。
-   3D ライブラリは使わず（ビルド不要・依存なしを崩さないため）、
-   キャンバスに等角投影で立方体を描く。
+   積み上がった姿を、好きな向きから見られるようにする。
+   3D ライブラリは使わない（ビルド不要・依存なしを崩さないため）。
+   やっていることは次の 3 つだけ。
 
-   カメラは +X +Z +Y の角から見下ろす向き。だから
-     ・奥から手前（rx + rz + y の昇順）に描けば前後関係が正しくなる
-     ・+X / +Z / +Y のどれかが空いているブロックだけが見える
-   この 2 つで、内部に埋まったブロックは最初から描かずに済む。 */
+     1. 面の露出を先に求める（隣が埋まっている面は、どの向きからも見えない）
+     2. カメラの向き（左右の回転 yaw と、見下ろし／見上げ pitch）で座標を回し、
+        正射影で平面に落とす。図面なので遠近はつけない
+     3. 奥から手前へ、法線がこちらを向いている面だけを塗る
 
-/** 回した後の座標から、元の座標に戻す */
-function invRot(rot, rx, rz, sx, sz) {
-  switch (rot & 3) {
-    case 1: return [rz, sz - 1 - rx];
-    case 2: return [sx - 1 - rx, sz - 1 - rz];
-    case 3: return [sx - 1 - rz, rx];
-    default: return [rx, rz];
-  }
-}
+   面の露出はカメラに依存しないので、図面ごとに 1 回だけ計算して使い回す。 */
+
+/** 面の向き。順に +X（東）/ -X / +Y（上）/ -Y / +Z（南）/ -Z */
+const FACES = [
+  { n: [1, 0, 0], d: [1, 0, 0], bit: 1 },
+  { n: [-1, 0, 0], d: [-1, 0, 0], bit: 2 },
+  { n: [0, 1, 0], d: [0, 1, 0], bit: 4 },
+  { n: [0, -1, 0], d: [0, -1, 0], bit: 8 },
+  { n: [0, 0, 1], d: [0, 0, 1], bit: 16 },
+  { n: [0, 0, -1], d: [0, 0, -1], bit: 32 },
+];
+
+/** 立方体の 8 頂点（中心を原点とした ±0.5） */
+const CUBE_CORNERS = [
+  [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+  [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+];
+/** 各面を作る頂点の並び（外から見て反時計回り） */
+const FACE_CORNERS = [
+  [1, 5, 6, 2],   // +X
+  [4, 0, 3, 7],   // -X
+  [3, 2, 6, 7],   // +Y
+  [4, 5, 1, 0],   // -Y
+  [5, 4, 7, 6],   // +Z
+  [0, 1, 2, 3],   // -Z
+];
 
 /**
- * 見えるブロックだけを、奥から手前の順で返す。
- * maxY を指定すると、そこまで積んだ状態になる（途中経過を見るため）。
+ * 露出している面のビットマスクを、図面全体ぶん作る。
+ * maxY を指定すると、そこで切った上面も露出として扱う（途中まで積んだ状態）。
  */
-function isoCells(g, rot, maxY) {
-  const swap = (rot & 1) === 1;
-  const W = swap ? g.sz : g.sx;
-  const D = swap ? g.sx : g.sz;
+function surfaceMask(g, maxY) {
   const H = Math.max(1, Math.min(g.sy, maxY == null ? g.sy : maxY));
-
-  const get = (rx, rz, y) => {
-    if (rx < 0 || rz < 0 || y < 0 || rx >= W || rz >= D || y >= H) return 0;
-    const [x, z] = invRot(rot, rx, rz, g.sx, g.sz);
+  const at = (x, y, z) => {
+    if (x < 0 || y < 0 || z < 0 || x >= g.sx || y >= H || z >= g.sz) return 0;
     return g.layers[y][z * g.sx + x];
   };
-
-  const cells = [];
+  const masks = [];
+  let faces = 0;
   for (let y = 0; y < H; y++) {
-    for (let rz = 0; rz < D; rz++) {
-      for (let rx = 0; rx < W; rx++) {
-        const idx = get(rx, rz, y);
-        if (!idx) continue;
-        // 手前 3 方向がすべて埋まっていれば、このブロックは見えない
-        if (get(rx + 1, rz, y) && get(rx, rz + 1, y) && get(rx, rz, y + 1)) continue;
-        cells.push({ rx, rz, y, idx });
+    const m = new Uint8Array(g.sx * g.sz);
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!at(x, y, z)) continue;
+        let bits = 0;
+        for (const f of FACES) {
+          if (!at(x + f.d[0], y + f.d[1], z + f.d[2])) { bits |= f.bit; faces++; }
+        }
+        m[z * g.sx + x] = bits;
+      }
+    }
+    masks.push(m);
+  }
+  return { masks, H, faces };
+}
+
+/** yaw（左右）と pitch（上下）の回転。正射影なので、返した x/y をそのまま画面に使う */
+function makeCamera(yaw, pitch) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  // 先に Y 軸まわりに回してから、X 軸まわりに倒す
+  return (x, y, z) => {
+    const rx = x * cy - z * sy;
+    const rz = x * sy + z * cy;
+    return [rx, y * cp - rz * sp, y * sp + rz * cp];
+  };
+}
+
+const LIGHT = (() => {
+  const v = [0.4, 0.85, 0.3];
+  const len = Math.hypot(v[0], v[1], v[2]);
+  return v.map((c) => c / len);
+})();
+
+/**
+ * 3D ビューを描く。opts は { yaw, pitch, zoom, maxY, quick }。
+ * quick は操作中の簡易描画で、陰影の計算を省く。
+ */
+function draw3D(canvas, g, opts) {
+  const o = opts || {};
+  const zoom = Math.max(1, Math.min(24, o.zoom || 6));
+  const cam = makeCamera(o.yaw || 0, o.pitch || 0);
+  const { masks, H } = surfaceMask(g, o.maxY);
+
+  const cx = (g.sx - 1) / 2, cy = (H - 1) / 2, cz = (g.sz - 1) / 2;
+
+  // 見えている面を集める。法線がこちらを向いていないものは、この時点で捨てる
+  const camN = FACES.map((f) => cam(f.n[0], f.n[1], f.n[2]));
+  const shade = FACES.map((f, i) => {
+    const dot = f.n[0] * LIGHT[0] + f.n[1] * LIGHT[1] + f.n[2] * LIGHT[2];
+    return o.quick ? 0 : dot * 0.34;          // 上を向く面ほど明るく
+  });
+
+  const items = [];
+  for (let y = 0; y < H; y++) {
+    const m = masks[y];
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        const bits = m[z * g.sx + x];
+        if (!bits) continue;
+        const p = cam(x - cx, y - cy, z - cz);
+        items.push({ x, y, z, bits, px: p[0], py: p[1], depth: p[2] });
       }
     }
   }
-  cells.sort((a, b) => (a.rx + a.rz + a.y) - (b.rx + b.rz + b.y));
-  return { cells, W, D, H };
+  items.sort((a, b) => a.depth - b.depth);     // 奥から手前へ
+
+  // 画面に収まる位置を出す
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY2 = -Infinity;
+  for (const it of items) {
+    if (it.px < minX) minX = it.px;
+    if (it.px > maxX) maxX = it.px;
+    if (it.py < minY) minY = it.py;
+    if (it.py > maxY2) maxY2 = it.py;
+  }
+  if (!items.length) { minX = maxX = minY = maxY2 = 0; }
+
+  const pad = zoom * 2;
+  const width = Math.max(32, Math.round((maxX - minX + 2) * zoom) + pad * 2);
+  const height = Math.max(32, Math.round((maxY2 - minY + 2) * zoom) + pad * 2);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const ox = pad - minX * zoom;
+  const oy = pad + maxY2 * zoom;               // 画面の y は下向きなので反転する
+  const project = (vx, vy, vz) => {
+    const p = cam(vx, vy, vz);
+    return [ox + p[0] * zoom, oy - p[1] * zoom];
+  };
+
+  let drawn = 0;
+  for (const it of items) {
+    const base = blockColor(g.palette[g.layers[it.y][it.z * g.sx + it.x]], g);
+    for (let fi = 0; fi < 6; fi++) {
+      if (!(it.bits & FACES[fi].bit)) continue;
+      if (camN[fi][2] <= 0.0001) continue;     // 裏を向いている面は描かない
+      const corners = FACE_CORNERS[fi];
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const c = CUBE_CORNERS[corners[k]];
+        const pt = project(it.x - cx + c[0], it.y - cy + c[1], it.z - cz + c[2]);
+        if (k === 0) ctx.moveTo(pt[0], pt[1]); else ctx.lineTo(pt[0], pt[1]);
+      }
+      ctx.closePath();
+      ctx.fillStyle = shade[fi] ? shadeColor(base, shade[fi]) : base;
+      ctx.fill();
+      drawn++;
+    }
+  }
+  return { faces: drawn, blocks: items.length };
 }
 
 /** 色を明るく／暗くする。#rrggbb と hsl() のどちらでも扱えるようにしておく */
 const shadeCache = new Map();
 function shadeColor(color, amount) {
-  const key = color + "|" + amount;
+  const key = color + "|" + amount.toFixed(3);
   const hit = shadeCache.get(key);
   if (hit) return hit;
   let out = color;
@@ -3330,56 +3464,6 @@ function shadeColor(color, amount) {
   }
   shadeCache.set(key, out);
   return out;
-}
-
-/** 立方体 1 個。上面・左面・右面の 3 枚を、明るさを変えて塗る */
-function drawCube(ctx, px, py, w2, h2, hh, color) {
-  ctx.fillStyle = shadeColor(color, 0.18);            // 上面
-  ctx.beginPath();
-  ctx.moveTo(px, py - h2); ctx.lineTo(px + w2, py); ctx.lineTo(px, py + h2); ctx.lineTo(px - w2, py);
-  ctx.closePath(); ctx.fill();
-
-  ctx.fillStyle = shadeColor(color, -0.18);           // 左面
-  ctx.beginPath();
-  ctx.moveTo(px - w2, py); ctx.lineTo(px, py + h2);
-  ctx.lineTo(px, py + h2 + hh); ctx.lineTo(px - w2, py + hh);
-  ctx.closePath(); ctx.fill();
-
-  ctx.fillStyle = shadeColor(color, -0.38);           // 右面
-  ctx.beginPath();
-  ctx.moveTo(px + w2, py); ctx.lineTo(px, py + h2);
-  ctx.lineTo(px, py + h2 + hh); ctx.lineTo(px + w2, py + hh);
-  ctx.closePath(); ctx.fill();
-}
-
-function drawIso(canvas, g, opts) {
-  const o = opts || {};
-  const tile = Math.max(2, Math.min(16, o.tile || 6));
-  const { cells, W, D, H } = isoCells(g, o.rot || 0, o.maxY);
-
-  const w2 = tile, h2 = tile / 2, hh = tile;
-  const pad = tile;
-  const width = (W + D) * w2 + pad * 2;
-  const height = H * hh + (W + D) * h2 + pad * 2;
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-
-  canvas.width = Math.round(width * dpr);
-  canvas.height = Math.round(height * dpr);
-  canvas.style.width = width + "px";
-  canvas.style.height = height + "px";
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-
-  const ox = pad + D * w2;
-  const oy = pad + (H - 1) * hh + h2;
-  for (const c of cells) {
-    drawCube(ctx,
-      ox + (c.rx - c.rz) * w2,
-      oy + (c.rx + c.rz) * h2 - c.y * hh,
-      w2, h2, hh, blockColor(g.palette[c.idx], g));
-  }
-  return cells.length;
 }
 
 /** 平面図。cell はセルの一辺（px）、gutter は座標目盛りの帯 */
@@ -3636,6 +3720,16 @@ function planCellSize(g) {
   return Math.max(6, Math.min(26, Math.floor((avail - 24) / Math.max(g.sx, 1))));
 }
 
+/** 見ている向きを日本語にする。方角はマイクラの座標系（+X が東、+Z が南） */
+function viewLabel(yaw, pitch) {
+  if (pitch >= 80) return "真上から";
+  if (pitch <= -80) return "真下から";
+  const dirs = ["南から", "南西から", "西から", "北西から", "北から", "北東から", "東から", "南東から"];
+  const dir = dirs[Math.round(((yaw % 360) + 360) % 360 / 45) % 8];
+  const tilt = pitch > 15 ? "見下ろし" : (pitch < -15 ? "見上げ" : "水平");
+  return dir + "（" + tilt + "）";
+}
+
 function renderIso(g) {
   const hMax = Math.max(1, g.sy);
   if (!isoHeight || isoHeight > hMax) isoHeight = hMax;
@@ -3644,18 +3738,22 @@ function renderIso(g) {
   slider.max = String(hMax);
   slider.value = String(isoHeight);
   $("#iso-zoom").value = String(isoZoom);
+  $("#iso-yaw").value = String(Math.round(((isoYaw % 360) + 360) % 360));
+  $("#iso-pitch").value = String(Math.round(isoPitch));
 
-  // 大きいものは自動で小さめに描く（手で変えられる）
   const t0 = Date.now();
-  const drawn = drawIso($("#iso"), g, { rot: isoRot, maxY: isoHeight, tile: isoZoom });
+  const res = draw3D($("#iso"), g, {
+    yaw: isoYaw * Math.PI / 180,
+    pitch: isoPitch * Math.PI / 180,
+    zoom: isoZoom, maxY: isoHeight, quick: isoQuick,
+  });
   const took = Date.now() - t0;
 
-  const dirs = ["南東から", "南西から", "北西から", "北東から"];
   $("#iso-status").textContent =
-    dirs[isoRot & 3] + "見た図  /  " +
+    viewLabel(isoYaw, isoPitch) + "  /  " +
     (isoHeight >= hMax ? "完成状態" : isoHeight + " 段目まで積んだ状態") +
-    "  /  見えているブロック " + drawn.toLocaleString() +
-    "（全 " + countBlocks(g).toLocaleString() + "）" +
+    "  /  見えているブロック " + res.blocks.toLocaleString() +
+    "（全 " + countBlocks(g).toLocaleString() + "）  /  面 " + res.faces.toLocaleString() +
     (took > 400 ? "  /  描画 " + took + "ms。重いときは「大きさ」を下げてください" : "");
 }
 
@@ -3964,10 +4062,49 @@ function initEvents() {
     loadSchematic(f);
   });
 
-  $("#iso-left").addEventListener("click", () => { isoRot = (isoRot + 3) & 3; renderOutputs(); });
-  $("#iso-right").addEventListener("click", () => { isoRot = (isoRot + 1) & 3; renderOutputs(); });
+  $("#iso-yaw").addEventListener("input", (e) => { isoYaw = Number(e.target.value); renderOutputs(); });
+  $("#iso-pitch").addEventListener("input", (e) => { isoPitch = Number(e.target.value); renderOutputs(); });
   $("#iso-height").addEventListener("input", (e) => { isoHeight = Number(e.target.value); renderOutputs(); });
   $("#iso-zoom").addEventListener("input", (e) => { isoZoom = Number(e.target.value); renderOutputs(); });
+  $("#iso-spin").addEventListener("click", () => { isoYaw = (isoYaw + 90) % 360; renderOutputs(); });
+  for (const b of document.querySelectorAll("[data-view]")) {
+    b.addEventListener("click", () => {
+      const [y, p] = b.dataset.view.split(",").map(Number);
+      isoYaw = y; isoPitch = p;
+      renderOutputs();
+    });
+  }
+
+  // 図の上をドラッグして回す。動かしている間は陰影を省いて軽くする
+  (() => {
+    const canvas = $("#iso");
+    let dragging = false, lastX = 0, lastY = 0;
+    const start = (e) => {
+      dragging = true; isoQuick = true;
+      lastX = e.clientX; lastY = e.clientY;
+      canvas.style.cursor = "grabbing";
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    };
+    const move = (e) => {
+      if (!dragging) return;
+      isoYaw = (isoYaw + (e.clientX - lastX) * 0.6) % 360;
+      isoPitch = Math.max(-89, Math.min(89, isoPitch + (e.clientY - lastY) * 0.5));
+      lastX = e.clientX; lastY = e.clientY;
+      renderOutputs();
+      e.preventDefault();
+    };
+    const end = () => {
+      if (!dragging) return;
+      dragging = false; isoQuick = false;
+      canvas.style.cursor = "grab";
+      renderOutputs();                       // 陰影つきで描き直す
+    };
+    canvas.addEventListener("pointerdown", start);
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerup", end);
+    canvas.addEventListener("pointercancel", end);
+    canvas.addEventListener("pointerleave", end);
+  })();
   $("#iso-png").addEventListener("click", () => {
     $("#iso").toBlob((blob) => {
       if (blob) downloadBlob(blob, "blueprint-iso.png");
@@ -4788,85 +4925,112 @@ function runSelfTest() {
   ok("有名建築の source は landmark", buildLandmark(lmSt("pisa")).source === "landmark");
 
 
-  // --- 19. 完成イメージ（等角投影） ---
+  // --- 19. 完成イメージ（3D ビュー） ---
   const cube = pBox(defaultState(), "minecraft:stone", 3, 3, 3, {});
 
-  ok("回転は 4 回で元に戻る", (() => {
-    for (let rot = 0; rot < 4; rot++) {
-      // 回した座標から元に戻せること（全マスで往復する）
-      const swap = (rot & 1) === 1;
-      const W = swap ? 3 : 3, D = swap ? 3 : 3;
-      const seen = new Set();
-      for (let rz = 0; rz < D; rz++) {
-        for (let rx = 0; rx < W; rx++) {
-          const [x, z] = invRot(rot, rx, rz, 3, 3);
-          if (x < 0 || z < 0 || x > 2 || z > 2) return false;
-          seen.add(x + "," + z);
-        }
-      }
-      if (seen.size !== 9) return false;    // 1 対 1 になっている
-    }
-    return true;
+  ok("内部のブロックは面が 1 つも露出しない", (() => {
+    // 3×3×3 の真ん中だけが完全に埋もれている
+    const { masks } = surfaceMask(cube);
+    return masks[1][1 * 3 + 1] === 0;
   })());
-  ok("回転で幅と奥行きが入れ替わる", (() => {
-    const g = pBox(defaultState(), "minecraft:stone", 5, 2, 3, {});
-    return isoCells(g, 0).W === 5 && isoCells(g, 0).D === 3 &&
-      isoCells(g, 1).W === 3 && isoCells(g, 1).D === 5;
+  ok("角のブロックは 3 面が露出する", (() => {
+    const { masks } = surfaceMask(cube);
+    const bits = masks[0][0];
+    let n = 0;
+    for (const f of FACES) if (bits & f.bit) n++;
+    return n === 3;
   })());
+  ok("露出している面の総数が合う", (() => {
+    // 3×3×3 の表面は 6 面 × 9 = 54
+    return surfaceMask(cube).faces === 54;
+  })());
+  ok("積み上げを指定すると、切った上面も露出になる", (() => {
+    const full = surfaceMask(cube);
+    const cut = surfaceMask(cube, 2);
+    // 高さ 2 の直方体は 3×3×2。表面は 2×(3×3) + 4×(3×2) = 18 + 24 = 42
+    return cut.H === 2 && cut.faces === 42 && full.faces === 54;
+  })());
+  ok("空のグリッドでも壊れない", surfaceMask(makeGrid(2, 2, 2, defaultState())).faces === 0);
 
-  ok("中に埋まったブロックは描かない", (() => {
-    // 3×3×3 の中身のうち、手前 3 方向がすべて埋まっている 2×2×2 = 8 個が隠れる
-    const { cells } = isoCells(cube, 0);
-    return cells.length === 27 - 8;
-  })());
-  ok("どの向きでも隠れる数は同じ", (() => {
-    for (let rot = 0; rot < 4; rot++) if (isoCells(cube, rot).cells.length !== 19) return false;
-    return true;
-  })());
-  ok("奥から手前の順に並ぶ", (() => {
-    const { cells } = isoCells(cube, 0);
-    for (let i = 1; i < cells.length; i++) {
-      const a = cells[i - 1], b = cells[i];
-      if ((a.rx + a.rz + a.y) > (b.rx + b.rz + b.y)) return false;
+  ok("回転しても長さが変わらない", (() => {
+    const cam = makeCamera(0.7, 0.4);
+    for (const v of [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 2, 3]]) {
+      const p = cam(v[0], v[1], v[2]);
+      const a = Math.hypot(v[0], v[1], v[2]), b = Math.hypot(p[0], p[1], p[2]);
+      if (Math.abs(a - b) > 1e-9) return false;
     }
     return true;
   })());
-  ok("積み上げの高さを指定すると、そこまでになる", (() => {
-    const { cells, H } = isoCells(cube, 0, 2);
-    if (H !== 2) return false;
-    if (cells.some((c) => c.y >= 2)) return false;
-    // 切った面は上が空くので見える。3×3×2 のうち隠れるのは 2×2×1 = 4 個
-    return cells.length === 18 - 4;
+  ok("回転なしでは座標がそのまま", (() => {
+    const p = makeCamera(0, 0)(1, 2, 3);
+    return Math.abs(p[0] - 1) < 1e-9 && Math.abs(p[1] - 2) < 1e-9 && Math.abs(p[2] - 3) < 1e-9;
   })());
-  ok("高さ 1 なら最下段だけ", isoCells(cube, 0, 1).cells.every((c) => c.y === 0));
-  ok("空のグリッドでも壊れない", isoCells(makeGrid(2, 2, 2, defaultState()), 0).cells.length === 0);
+  ok("左右 90 度で東西と南北が入れ替わる", (() => {
+    const p = makeCamera(Math.PI / 2, 0)(1, 0, 0);
+    return Math.abs(p[0]) < 1e-9 && Math.abs(p[2] - 1) < 1e-9;
+  })());
+  ok("真上から見ると、上面がこちらを向く", (() => {
+    // pitch = +90 度。+Y の法線が、画面の手前（z が正）に来る
+    const cam = makeCamera(0, Math.PI / 2);
+    const up = cam(0, 1, 0);
+    return up[2] > 0.99;
+  })());
+  ok("下から見ると、底面がこちらを向く", (() => {
+    const cam = makeCamera(0, -Math.PI / 2);
+    const down = cam(0, -1, 0);
+    return down[2] > 0.99;
+  })());
+  ok("正面から見ると、上面は見えない", (() => {
+    // pitch = 0 なら +Y の法線は画面と平行で、面としては見えない
+    const cam = makeCamera(0, 0);
+    return Math.abs(cam(0, 1, 0)[2]) < 1e-9;
+  })());
+  ok("どの向きでも、見える面は 3 方向まで", (() => {
+    // 立方体の 6 面のうち、こちらを向くのは同時に 3 つまで
+    for (let yaw = 0; yaw < 360; yaw += 17) {
+      for (let pitch = -80; pitch <= 80; pitch += 23) {
+        const cam = makeCamera(yaw * Math.PI / 180, pitch * Math.PI / 180);
+        let n = 0;
+        for (const f of FACES) if (cam(f.n[0], f.n[1], f.n[2])[2] > 0.0001) n++;
+        if (n > 3) return false;
+      }
+    }
+    return true;
+  })());
 
   ok("色を明るく・暗くできる（16 進）", (() => {
     const light = shadeColor("#808080", 0.5), dark = shadeColor("#808080", -0.5);
     return /^rgb\(/.test(light) && /^rgb\(/.test(dark) && light !== dark;
   })());
-  ok("色を明るく・暗くできる（hsl）", (() => {
-    const dark = shadeColor("hsl(200 42% 58%)", -0.5);
-    return /^hsl\(200 42% 29\.0%\)$/.test(dark);
-  })());
+  ok("色を明るく・暗くできる（hsl）",
+    /^hsl\(200 42% 29\.0%\)$/.test(shadeColor("hsl(200 42% 58%)", -0.5)));
   ok("知らない書式はそのまま返す", shadeColor("rebeccapurple", 0.5) === "rebeccapurple");
 
-  ok("有名建築も等角図にできる", (() => {
+  ok("有名建築の面も数えられる", (() => {
     for (const key of ["goju_no_to", "taj_mahal", "otorii"]) {
       const g = buildLandmark(lmSt(key));
-      const { cells } = isoCells(g, 0);
-      if (!cells.length || cells.length > countBlocks(g)) return false;
+      const { faces } = surfaceMask(g);
+      if (!faces || faces > countBlocks(g) * 6) return false;
     }
     return true;
   })());
+  ok("中身が詰まっているほど、面の割合は小さくなる", (() => {
+    // ピラミッドは中が詰まっているので、ブロック 1 個あたりの露出面はごくわずか
+    const g = buildLandmark(lmSt("giza", { lmScale: 8 }));
+    return surfaceMask(g).faces / countBlocks(g) < 1;
+  })());
   ok("タージ・マハルの本体には屋上がある", (() => {
-    // 屋上が無いとドームが宙に浮く。中央の柱の真下が埋まっていることで確かめる
+    // 屋上が無いとドームが宙に浮く
     const g = buildLandmark(lmSt("taj_mahal"));
     const cx = Math.floor(g.sx / 2), cz = Math.floor(g.sz / 2);
     let top = -1;
     for (let y = 0; y < g.sy; y++) if (gGet(g, cx, y, cz)) top = y;
-    // 中央の縦一列に、途切れずに続く部分がある（ドームの下に床がある）
     return top > 0 && gGet(g, cx, top - 1, cz) !== K.EMPTY;
+  })());
+  ok("見ている向きの説明が出る", (() => {
+    return viewLabel(0, 89) === "真上から" && viewLabel(0, -89) === "真下から" &&
+      /南から/.test(viewLabel(0, 0)) && /水平/.test(viewLabel(0, 0)) &&
+      /見下ろし/.test(viewLabel(45, 30));
   })());
 
   // --- 結果表示 ---
