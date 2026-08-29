@@ -159,6 +159,12 @@ legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
   background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
 }
 
+.modes.sub button { font-size: 12.5px; padding: 5px 8px; }
+.lm-card { display: flex; flex-direction: column; gap: 2px; align-items: flex-start !important; }
+.lm-card .lm-name { font-weight: 600; }
+.lm-card .lm-meta { color: var(--muted); font-size: 11.5px; }
+.lm-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
+
 .drop {
   border: 2px dashed var(--line); border-radius: var(--radius);
   padding: 22px 16px; text-align: center; cursor: pointer; background: var(--panel);
@@ -167,6 +173,9 @@ legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
 .drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
 .drop b { font-size: 13.5px; }
 .drop span { font-size: 12px; color: var(--muted); }
+.iso-ctl { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin: 0; }
+.iso-ctl input[type="range"] { width: 110px; padding: 0; }
+
 .repo-bar { display: flex; gap: 8px; margin-bottom: 6px; }
 .repo-bar input { flex: 1; min-width: 0; }
 .filelist { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
@@ -376,12 +385,28 @@ pre.code {
 
     <div class="mode-panel" id="mode-building" hidden>
       <h2>実際の建物から起こす</h2>
-      <p class="shape-desc">
+      <div class="modes sub" id="bsource" role="tablist">
+        <button data-bsource="size" role="tab" aria-selected="true">寸法から</button>
+        <button data-bsource="landmark" role="tab" aria-selected="false">有名建築から</button>
+      </div>
+
+      <div id="landmark-panel" hidden>
+        <p class="shape-desc">
+          建物の名前を入れて選ぶと、実寸に合わせた図面と材料表が出ます。
+          実測の再現ではなく、<b>ブロックで積める形に単純化した外形</b>です。
+        </p>
+        <input type="text" id="lm-query" placeholder="建物名で絞り込む（例: タージ、castle、tower）"
+               aria-label="建物名" autocomplete="off">
+        <div class="filelist" id="lm-list" style="margin-top:8px"></div>
+        <div id="lm-info"></div>
+      </div>
+
+      <p class="shape-desc" id="size-desc">
         現実の寸法（メートル）を入れると、1 ブロック何メートルで建てるかに合わせて
         基礎・壁・床・窓・玄関・屋根の図面にします。
       </p>
       <div id="building-info"></div>
-      <fieldset>
+      <fieldset id="fs-size">
         <legend>寸法とスケール</legend>
         <div id="building-params"></div>
         <div class="row">
@@ -395,7 +420,7 @@ pre.code {
           </div>
         </div>
       </fieldset>
-      <fieldset>
+      <fieldset id="fs-bblocks">
         <legend>使うブロック</legend>
         <div id="building-blocks"></div>
       </fieldset>
@@ -418,6 +443,7 @@ pre.code {
   <section class="pane out">
     <div class="tabs" role="tablist">
       <button data-tab="plan" role="tab" aria-selected="true">平面図</button>
+      <button data-tab="iso" role="tab" aria-selected="false">完成イメージ</button>
       <button data-tab="sheet" role="tab" aria-selected="false">全レイヤー</button>
       <button data-tab="mats" role="tab" aria-selected="false">材料</button>
       <button data-tab="text" role="tab" aria-selected="false">テキスト</button>
@@ -447,6 +473,37 @@ pre.code {
       </div>
       <div class="canvaswrap"><canvas id="elev"></canvas></div>
       <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="tabpanel" id="tab-iso">
+      <div class="planbar">
+        <label class="iso-ctl">左右
+          <input type="range" id="iso-yaw" min="0" max="359" value="45">
+        </label>
+        <label class="iso-ctl">上下
+          <input type="range" id="iso-pitch" min="-89" max="89" value="30">
+        </label>
+        <label class="iso-ctl">積み上げ
+          <input type="range" id="iso-height" min="1" max="1" value="1">
+        </label>
+        <label class="iso-ctl">大きさ
+          <input type="range" id="iso-zoom" min="2" max="20" value="6">
+        </label>
+      </div>
+      <div class="planbar">
+        <span class="iso-ctl">視点</span>
+        <button class="mini" data-view="45,30">斜め上</button>
+        <button class="mini" data-view="0,0">正面</button>
+        <button class="mini" data-view="90,0">横</button>
+        <button class="mini" data-view="0,89">真上</button>
+        <button class="mini" data-view="0,-60">下から</button>
+        <button class="mini" id="iso-spin">90° 回す</button>
+        <div class="spacer" style="flex:1"></div>
+        <button class="mini" id="iso-png">PNG 保存</button>
+      </div>
+      <p class="readout" id="iso-status"></p>
+      <div class="canvaswrap"><canvas id="iso" style="cursor:grab; touch-action:none"></canvas></div>
+      <p class="hint">図の上をドラッグしても回せます。</p>
     </div>
 
     <div class="tabpanel" id="tab-sheet">
@@ -510,9 +567,12 @@ const DIR = { NONE: 0, NORTH: 1, EAST: 2, SOUTH: 3, WEST: 4 };
 const DIR_NAME = { 1: "north", 2: "east", 3: "south", 4: "west" };
 const DIR_ARROW = { 0: "#", 1: "^", 2: ">", 3: "v", 4: "<" };
 
-const MAX_R = 48;      // 半径の上限
-const MAX_H = 128;     // 高さの上限
-const MAX_SIDE = 128;  // 幅・奥行きの上限
+const MAX_R = 96;        // 半径の上限（内部）。フォームの上限は FIELDS 側で 48 に絞る
+const MAX_H = 256;       // 高さの上限（内部）
+const MAX_SIDE = 256;    // 幅・奥行きの上限（内部）
+const FORM_R = 48;       // 形状フォームで入力できる半径の上限
+const FORM_H = 128;
+const FORM_SIDE = 128;
 
 /* ------------------------------------------------------------------
    2. state（唯一の真実）
@@ -549,6 +609,12 @@ function defaultState() {
     bFloorBlock: "minecraft:stone_bricks",
     bGlassBlock: "minecraft:glass",
     bRoofBlock: "minecraft:dark_oak_planks",
+    // 有名建築
+    bSource: "size",              // "size" = 寸法から / "landmark" = 有名建築から
+    landmark: "taj_mahal",
+    lmShell: false,
+    lmScale: 0,                   // 0 なら建物ごとの既定スケールを使う
+    lmQuery: "",
     // コマンド出力
     block: "minecraft:stone",
     stairBlock: "minecraft:oak_stairs",
@@ -558,6 +624,11 @@ function defaultState() {
 let state = defaultState();
 let layerIndex = 0;
 let elevMode = "section";
+let isoYaw = 45;                // 左右の回転（度）
+let isoPitch = 30;              // 上下。+ が見下ろし、- が見上げ
+let isoHeight = 0;              // 0 なら全部（完成状態）
+let isoZoom = 6;
+let isoQuick = false;           // ドラッグ中は陰影を省いて軽くする
 let activeTab = "plan";
 
 /* ------------------------------------------------------------------
@@ -568,17 +639,17 @@ let activeTab = "plan";
    ------------------------------------------------------------------ */
 
 const FIELDS = {
-  rx:  { label: "半径 X", type: "int", min: 0, max: MAX_R },
-  ry:  { label: "半径 Y（高さ方向）", type: "int", min: 0, max: MAX_R },
-  rz:  { label: "半径 Z", type: "int", min: 0, max: MAX_R },
-  height: { label: "高さ（段数）", type: "int", min: 1, max: MAX_H },
+  rx:  { label: "半径 X", type: "int", min: 0, max: FORM_R },
+  ry:  { label: "半径 Y（高さ方向）", type: "int", min: 0, max: FORM_R },
+  rz:  { label: "半径 Z", type: "int", min: 0, max: FORM_R },
+  height: { label: "高さ（段数）", type: "int", min: 1, max: FORM_H },
   even: { label: "偶数直径にする（中心が 2×2）", type: "bool" },
   hollow: { label: "中を空洞にする", type: "bool" },
   thickness: { label: "壁の厚み", type: "int", min: 1, max: 8, showIf: (s) => s.hollow },
   capBottom: { label: "床を張る", type: "bool", showIf: (s) => s.hollow },
   capTop: { label: "天井を張る", type: "bool", showIf: (s) => s.hollow },
-  width: { label: "幅 X", type: "int", min: 1, max: MAX_SIDE },
-  depth: { label: "奥行き Z", type: "int", min: 1, max: MAX_SIDE },
+  width: { label: "幅 X", type: "int", min: 1, max: FORM_SIDE },
+  depth: { label: "奥行き Z", type: "int", min: 1, max: FORM_SIDE },
   run: { label: "勾配（1 段上がるのに横 N ブロック）", type: "int", min: 1, max: 8 },
   stairs: { label: "階段ブロックを使う", type: "bool" },
   gableEnds: { label: "妻壁（両端の三角）を埋める", type: "bool" },
@@ -587,7 +658,7 @@ const FIELDS = {
   spinCw: { label: "上から見て時計回り", type: "bool" },
   pillar: { label: "中心に柱を立てる", type: "bool" },
   span: { label: "開口の幅", type: "int", min: 1, max: 64 },
-  rise: { label: "開口の高さ（弧の部分）", type: "int", min: 1, max: MAX_R },
+  rise: { label: "開口の高さ（弧の部分）", type: "int", min: 1, max: FORM_R },
   archDepth: { label: "奥行き Z", type: "int", min: 1, max: 32 },
   archThickness: { label: "アーチの厚み", type: "int", min: 1, max: 8 },
   legs: { label: "脚の高さ", type: "int", min: 0, max: 64 },
@@ -1308,6 +1379,549 @@ function buildBuilding(st) {
   return g;
 }
 
+/* ---------- 有名建築のプリセット ----------
+
+   世界遺産などの有名な建物を、既存の部品（箱・台形・四角錐・円柱・ドーム・
+   屋根・アーチ）の組み合わせとして定義する。実測の再現ではなく、
+   ブロックで積める形に単純化した外形。実寸（m）と既定のスケールを持たせて、
+   1 ブロック何メートルで建てるかを変えられるようにしてある。 */
+
+const MAX_LANDMARK_SIDE = 192;
+
+/** 部品を作るときの土台。ブロックだけ差し替えた state を作る */
+function partSt(st, block, stairBlock) {
+  return Object.assign({}, st, {
+    block: block || "minecraft:stone",
+    stairBlock: stairBlock || "minecraft:stone_brick_stairs",
+  });
+}
+
+/** 直方体。hollow なら壁だけ（caps で上下に蓋をする） */
+function pBox(st, block, w, h, d, o) {
+  const opt = o || {};
+  const wall = Math.max(1, opt.wall || 1);
+  const g = makeGrid(Math.max(1, w), Math.max(1, h), Math.max(1, d), partSt(st, block));
+  const idx = paletteIndex(g, { id: g.blocks.block, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  for (let y = 0; y < g.sy; y++) {
+    const cap = opt.caps && (y === 0 || y === g.sy - 1);
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        const edge = x < wall || z < wall || x >= g.sx - wall || z >= g.sz - wall;
+        if (!opt.hollow || edge || cap) g.layers[y][z * g.sx + x] = idx;
+      }
+    }
+  }
+  return g;
+}
+
+/** 台形の柱。石垣や塔のテーパーに使う。下が w0×d0、上が w1×d1 */
+function pFrustum(st, block, w0, d0, w1, d1, h, o) {
+  const opt = o || {};
+  const sx = Math.max(1, Math.max(w0, w1)), sz = Math.max(1, Math.max(d0, d1));
+  const sy = Math.max(1, h);
+  const g = makeGrid(sx, sy, sz, partSt(st, block));
+  const idx = paletteIndex(g, { id: g.blocks.block, props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  for (let y = 0; y < sy; y++) {
+    const t = sy === 1 ? 0 : y / (sy - 1);
+    const w = Math.max(1, Math.round(w0 + (w1 - w0) * t));
+    const d = Math.max(1, Math.round(d0 + (d1 - d0) * t));
+    const x0 = Math.floor((sx - w) / 2), z0 = Math.floor((sz - d) / 2);
+    const wall = Math.max(1, opt.wall || 1);
+    for (let z = z0; z < z0 + d; z++) {
+      for (let x = x0; x < x0 + w; x++) {
+        const edge = x < x0 + wall || z < z0 + wall || x >= x0 + w - wall || z >= z0 + d - wall;
+        if (!opt.hollow || edge) g.layers[y][z * sx + x] = idx;
+      }
+    }
+  }
+  return g;
+}
+
+/** 四角錐。ピラミッド用。頂点まで詰まった形 */
+function pPyramid(st, block, base, h) {
+  return pFrustum(st, block, base, base, 1, 1, h, {});
+}
+
+/** 円柱。既存の円ジェネレータをそのまま使う */
+function pColumn(st, block, r, h, o) {
+  const opt = o || {};
+  return buildCylinder(Object.assign(partSt(st, block), {
+    rx: r, rz: opt.rz == null ? r : opt.rz, height: h,
+    hollow: Boolean(opt.hollow), thickness: opt.wall || 1,
+    capBottom: false, capTop: false, even: false,
+  }));
+}
+
+/** ドーム。玉ねぎ形は「胴（円柱）＋半球」で近似する */
+function pDome(st, block, r, ry, o) {
+  const opt = o || {};
+  return buildSphere(Object.assign(partSt(st, block), {
+    rx: r, ry: ry == null ? r : ry, rz: r,
+    hollow: Boolean(opt.hollow), thickness: opt.wall || 1, even: false,
+  }), true);
+}
+
+/** 寄棟屋根。既存のものをそのまま使う */
+function pHipRoof(st, block, stairBlock, w, d, run) {
+  return buildHip(Object.assign(partSt(st, block, stairBlock), {
+    width: w, depth: d, run: Math.max(1, run || 1), stairs: true,
+  }));
+}
+
+/**
+ * 開口付きの楕円リング。コロッセオやピサの列柱に使う。
+ * n 個の開口を角度で等間隔に空ける。
+ */
+function pArcade(st, block, rx, rz, h, wall, n, openFrac) {
+  const g = pColumn(st, block, rx, h, { rz, hollow: true, wall });
+  if (!n || !openFrac) return g;
+  const cx = (g.sx - 1) / 2, cz = (g.sz - 1) / 2;
+  const half = (Math.PI / n) * Math.max(0, Math.min(0.95, openFrac));
+  const top = Math.max(1, Math.round(h * 0.75));      // 上端は帯として残す
+  for (let y = 1; y < top; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!g.layers[y][z * g.sx + x]) continue;
+        const a = Math.atan2(z - cz, x - cx);
+        for (let k = 0; k < n; k++) {
+          const c = -Math.PI + (2 * Math.PI * (k + 0.5)) / n;
+          let d = Math.abs(a - c);
+          if (d > Math.PI) d = 2 * Math.PI - d;
+          if (d < half) { g.layers[y][z * g.sx + x] = 0; break; }
+        }
+      }
+    }
+  }
+  return g;
+}
+
+/** アーチの開口だけを作る。くり抜き（carve）に使う */
+function pArchVoid(st, span, rise, depth) {
+  const sx = Math.max(1, span), sy = Math.max(1, rise + 1), sz = Math.max(1, depth);
+  const g = makeGrid(sx, sy, sz, st);
+  const idx = paletteIndex(g, { id: "minecraft:air", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+  const cx = (sx - 1) / 2;
+  const straight = Math.max(0, Math.round(rise * 0.45));   // 下は垂直、上が弧
+  for (let y = 0; y < sy; y++) {
+    for (let x = 0; x < sx; x++) {
+      let on;
+      if (y <= straight) on = true;
+      else {
+        const u = (x - cx) / (span / 2), v = (y - straight) / Math.max(1, rise - straight);
+        on = u * u + v * v <= 1;
+      }
+      if (!on) continue;
+      for (let z = 0; z < sz; z++) g.layers[y][z * sx + x] = idx;
+    }
+  }
+  return g;
+}
+
+/** 部品の置き方。x/z は中心そろえ、y は下端 */
+const at = (grid, x, y, z) => ({ grid, x, y, z });
+const mid = (grid, y, x, z) => ({
+  grid, y,
+  x: (x || 0) - Math.floor(grid.sx / 2),
+  z: (z || 0) - Math.floor(grid.sz / 2),
+});
+const carve = (part) => Object.assign({}, part, { cut: true });
+
+/** src で埋まっているところを空にする */
+function carveGrid(dst, src, ox, oy, oz) {
+  for (let y = 0; y < src.sy; y++) {
+    for (let z = 0; z < src.sz; z++) {
+      for (let x = 0; x < src.sx; x++) {
+        if (!src.layers[y][z * src.sx + x]) continue;
+        gSetIdx(dst, ox + x, oy + y, oz + z, 0);
+      }
+    }
+  }
+}
+
+/** 部品の一覧を 1 つのグリッドにまとめる。置いてから、くり抜く */
+function assembleParts(parts, st, title) {
+  const solid = parts.filter((p) => p && p.grid && !p.cut);
+  const cuts = parts.filter((p) => p && p.grid && p.cut);
+  if (!solid.length) return makeGrid(1, 1, 1, st);
+
+  const minX = Math.min(...solid.map((p) => p.x));
+  const minY = Math.min(...solid.map((p) => p.y));
+  const minZ = Math.min(...solid.map((p) => p.z));
+  const sx = Math.max(...solid.map((p) => p.x + p.grid.sx)) - minX;
+  const sy = Math.max(...solid.map((p) => p.y + p.grid.sy)) - minY;
+  const sz = Math.max(...solid.map((p) => p.z + p.grid.sz)) - minZ;
+
+  const g = makeGrid(sx, sy, sz, st);
+  g.source = "landmark";
+  g.title = title;
+  for (const p of solid) blitGrid(g, p.grid, p.x - minX, p.y - minY, p.z - minZ);
+  for (const p of cuts) carveGrid(g, p.grid, p.x - minX, p.y - minY, p.z - minZ);
+  return g;
+}
+
+/* ---------- 収録している建物 ----------
+
+   real は実測の代表値（m）。scale は既定の「1 ブロック = 何 m」で、
+   マイクラで積める大きさに収まるように選んである。
+   parts(c) の c は次を持つ。
+     c.m(メートル) … ブロック数に換算（最低 1）
+     c.st          … いまの state（ブロックの指定などを引き継ぐ）  */
+
+const LANDMARKS = {
+  himeji: {
+    label: "姫路城", where: "日本 / 世界遺産", alias: "himeji castle しらさぎ 白鷺城",
+    real: { w: 26, d: 24, h: 46 }, scale: 1,
+    note: "大天守のみ。石垣の上に、5 層の塔身と寄棟屋根を重ねた形に単純化しています。",
+    parts: (c) => {
+      const out = [];
+      const base = c.m(24), h0 = c.m(15);
+      out.push(mid(pFrustum(c.st, "minecraft:stone_bricks", base, base - 2, base - 6, base - 8, h0), 0));
+      let y = h0, w = c.m(17), d = c.m(15);
+      for (let i = 0; i < 5; i++) {
+        const th = Math.max(2, c.m(3));
+        out.push(mid(pBox(c.st, "minecraft:white_concrete", w, th, d, { hollow: true, wall: 1 }), y));
+        y += th;
+        // 城の屋根は幅のわりに低い。勾配 3（3 ブロック内側へ入って 1 段上がる）
+        const roof = pHipRoof(c.st, "minecraft:deepslate_tiles", "minecraft:deepslate_tile_stairs",
+          w + 4, d + 4, 3);
+        out.push(mid(roof, y));
+        y += Math.max(1, roof.sy - 1);
+        w = Math.max(3, w - c.m(2.5)); d = Math.max(3, d - c.m(2.5));
+      }
+      return out;
+    },
+  },
+
+  goju_no_to: {
+    label: "五重塔（法隆寺）", where: "日本 / 世界遺産", alias: "gojunoto pagoda ごじゅうのとう 塔",
+    real: { w: 10, d: 10, h: 32 }, scale: 1,
+    note: "五重塔。心柱を通し、5 層の屋根を重ねています。相輪は簡略化した柱と輪です。",
+    parts: (c) => {
+      const out = [];
+      out.push(mid(pBox(c.st, "minecraft:stone_bricks", c.m(10), 1, c.m(10)), 0));
+      let y = 1, w = c.m(7);
+      for (let i = 0; i < 5; i++) {
+        const th = Math.max(2, c.m(3));
+        out.push(mid(pBox(c.st, "minecraft:stripped_spruce_wood", w, th, w, { hollow: true, wall: 1 }), y));
+        y += th;
+        const eaves = w + c.m(3);
+        // 塔の屋根は深い軒。低く広く出すため勾配 2
+        const roof = pHipRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs", eaves, eaves, 2);
+        out.push(mid(roof, y));
+        y += Math.max(1, roof.sy - 1);
+        w = Math.max(3, w - Math.max(1, c.m(0.8)));
+      }
+      // 心柱と相輪
+      out.push(mid(pColumn(c.st, "minecraft:stripped_dark_oak_wood", 0, y - 1), 1));
+      out.push(mid(pColumn(c.st, "minecraft:gold_block", 0, c.m(6)), y));
+      for (let i = 0; i < 4; i++) {
+        out.push(mid(pColumn(c.st, "minecraft:gold_block", 1, 1), y + 1 + i * Math.max(1, c.m(1.4))));
+      }
+      return out;
+    },
+  },
+
+  otorii: {
+    label: "厳島神社 大鳥居", where: "日本 / 世界遺産", alias: "itsukushima torii おおとりい 宮島",
+    real: { w: 24, d: 8, h: 16 }, scale: 1,
+    note: "四脚の大鳥居。実物は主柱が内側に傾いていますが、図面では垂直にしています。",
+    parts: (c) => {
+      const out = [];
+      const half = Math.round(c.m(10) / 2) * 2;         // 主柱の間隔（偶数にそろえる）
+      const colH = c.m(13), r = Math.max(1, c.m(1.2));
+      const legs = [[-half, 0], [half, 0]];
+      for (const [x, z] of legs) {
+        out.push(mid(pColumn(c.st, "minecraft:red_concrete", r, colH), 0, x, z));
+        // 控柱
+        for (const dz of [-c.m(3), c.m(3)]) {
+          out.push(mid(pColumn(c.st, "minecraft:red_concrete", Math.max(0, r - 1), Math.round(colH * 0.6)), 0, x, dz));
+        }
+      }
+      const beamW = half * 2 + c.m(4);
+      out.push(mid(pBox(c.st, "minecraft:red_concrete", beamW - c.m(3), Math.max(1, c.m(1)), Math.max(2, c.m(2))),
+        colH - c.m(3)));                                 // 貫
+      out.push(mid(pBox(c.st, "minecraft:red_concrete", beamW, Math.max(1, c.m(1.2)), Math.max(3, c.m(3))), colH));
+      out.push(mid(pBox(c.st, "minecraft:black_concrete", beamW + c.m(2), Math.max(1, c.m(1)), Math.max(3, c.m(3.5))),
+        colH + Math.max(1, c.m(1.2))));                  // 笠木
+      return out;
+    },
+  },
+
+  daibutsuden: {
+    label: "東大寺 大仏殿", where: "日本 / 世界遺産", alias: "todaiji daibutsuden だいぶつでん 奈良",
+    real: { w: 57, d: 50, h: 48 }, scale: 1,
+    note: "世界最大級の木造建築。裳階（下屋根）と大屋根の二重屋根です。",
+    parts: (c) => {
+      const out = [];
+      const w = c.m(57), d = c.m(50);
+      out.push(mid(pBox(c.st, "minecraft:stone_bricks", w + c.m(3), Math.max(1, c.m(2)), d + c.m(3)), 0));
+      let y = Math.max(1, c.m(2));
+      out.push(mid(pBox(c.st, "minecraft:spruce_planks", w, c.m(12), d, { hollow: true, wall: 1 }), y));
+      y += c.m(12);
+      const lower = pHipRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs", w + c.m(4), d + c.m(4), 2);
+      out.push(mid(lower, y));                            // 裳階
+      y += Math.max(2, Math.round(lower.sy * 0.35));
+      out.push(mid(pBox(c.st, "minecraft:spruce_planks", w - c.m(8), c.m(8), d - c.m(8), { hollow: true, wall: 1 }), y));
+      y += c.m(8);
+      out.push(mid(pHipRoof(c.st, "minecraft:dark_oak_planks", "minecraft:dark_oak_stairs", w, d, 1), y));
+      return out;
+    },
+  },
+
+  taj_mahal: {
+    label: "タージ・マハル", where: "インド / 世界遺産", alias: "taj mahal たーじまはる",
+    real: { w: 95, d: 95, h: 73 }, scale: 1.5,
+    note: "本廟のみ（庭園と門は含みません）。基壇・大ドーム・四隅の小ドーム・四本のミナレット。",
+    parts: (c) => {
+      const out = [];
+      const plinth = c.m(95), body = c.m(57);
+      out.push(mid(pBox(c.st, "minecraft:quartz_bricks", plinth, Math.max(1, c.m(6)), plinth), 0));
+      let y = Math.max(1, c.m(6));
+      out.push(mid(pBox(c.st, "minecraft:quartz_block", body, c.m(34), body, { hollow: true, wall: 2 }), y));
+      // 四面の大アーチをくり抜く
+      const span = c.m(18), rise = c.m(16);
+      out.push(carve(mid(pArchVoid(c.st, span, rise, c.m(4)), y + 1, 0, -Math.floor(body / 2) + c.m(2))));
+      out.push(carve(mid(pArchVoid(c.st, span, rise, c.m(4)), y + 1, 0, Math.floor(body / 2) - c.m(2))));
+      y += c.m(34);
+      // 屋上のテラス。これが無いと本体が箱のまま開いていて、ドームが宙に浮く
+      out.push(mid(pBox(c.st, "minecraft:quartz_block", body, 1, body), y));
+      y += 1;
+      // 胴（ドラム）と大ドーム。玉ねぎ形なので、半球を縦に伸ばす
+      const drumR = Math.max(2, Math.round(c.m(17) / 2));
+      out.push(mid(pColumn(c.st, "minecraft:quartz_block", drumR, c.m(9)), y));
+      y += c.m(9);
+      out.push(mid(pDome(c.st, "minecraft:quartz_block", drumR, Math.round(drumR * 1.6)), y));
+      const domeTop = y + Math.round(drumR * 1.6);
+      out.push(mid(pColumn(c.st, "minecraft:gold_block", 0, Math.max(2, c.m(5))), domeTop));
+      // 四隅の小ドーム
+      const off = Math.floor(body / 2) - c.m(9);
+      for (const sx of [-off, off]) {
+        for (const sz of [-off, off]) {
+          const r = Math.max(2, Math.round(c.m(7) / 2));
+          const base = Math.max(1, c.m(6)) + c.m(34) + 1;
+          out.push(mid(pColumn(c.st, "minecraft:quartz_block", r, c.m(4)), base, sx, sz));
+          out.push(mid(pDome(c.st, "minecraft:quartz_block", r, r), base + c.m(4), sx, sz));
+        }
+      }
+      // 四本のミナレット
+      const mo = Math.floor(plinth / 2) - c.m(6);
+      for (const sx of [-mo, mo]) {
+        for (const sz of [-mo, mo]) {
+          const r = Math.max(1, Math.round(c.m(4) / 2));
+          out.push(mid(pColumn(c.st, "minecraft:quartz_block", r, c.m(41)), Math.max(1, c.m(6)), sx, sz));
+          out.push(mid(pDome(c.st, "minecraft:quartz_block", r + 1, r + 1), Math.max(1, c.m(6)) + c.m(41), sx, sz));
+        }
+      }
+      return out;
+    },
+  },
+
+  giza: {
+    label: "ギザの大ピラミッド", where: "エジプト / 世界遺産", alias: "giza pyramid ぴらみっど khufu",
+    real: { w: 230, d: 230, h: 139 }, scale: 2,
+    note: "クフ王のピラミッド。四角錐そのものなので、実物にいちばん近く出ます。",
+    parts: (c) => [mid(pPyramid(c.st, "minecraft:sandstone", c.m(230), c.m(139)), 0)],
+  },
+
+  colosseum: {
+    label: "コロッセオ", where: "イタリア / 世界遺産", alias: "colosseum ころっせお roma",
+    real: { w: 188, d: 156, h: 48 }, scale: 1.5,
+    note: "楕円形の外周を 3 層のアーケードとして表しています。内部の観客席は含みません。",
+    parts: (c) => {
+      const out = [];
+      const rx = Math.round(c.m(188) / 2), rz = Math.round(c.m(156) / 2);
+      const wall = Math.max(2, c.m(6));
+      const tier = Math.max(3, Math.round(c.m(48) / 3));
+      let y = 0;
+      for (let i = 0; i < 3; i++) {
+        const shrink = i * Math.max(0, c.m(1));
+        out.push(mid(pArcade(c.st, "minecraft:smooth_sandstone",
+          rx - shrink, rz - shrink, tier, wall, 40, 0.55), y));
+        y += tier;
+      }
+      return out;
+    },
+  },
+
+  pisa: {
+    label: "ピサの斜塔", where: "イタリア / 世界遺産", alias: "pisa tower ぴさ しゃとう",
+    real: { w: 16, d: 16, h: 56 }, scale: 0.75,
+    note: "円柱を積んだ鐘楼。傾きは、段ごとに少しずつずらして表しています。",
+    parts: (c) => {
+      const out = [];
+      const r = Math.max(3, Math.floor(c.m(16) / 2));
+      const tier = Math.max(3, Math.round(c.m(56) / 8));
+      const lean = 2 / 8;                                  // 全体で 2 ブロックほどずらす
+      let y = 0;
+      out.push(mid(pColumn(c.st, "minecraft:smooth_quartz", r, tier, { hollow: true, wall: 2 }), y));
+      y += tier;
+      for (let i = 1; i < 7; i++) {
+        const dx = Math.round(lean * i);
+        out.push(mid(pArcade(c.st, "minecraft:smooth_quartz", r, r, tier, 2, 14, 0.5), y, dx, 0));
+        y += tier;
+      }
+      out.push(mid(pColumn(c.st, "minecraft:smooth_quartz", Math.max(2, r - 2), tier,
+        { hollow: true, wall: 2 }), y, Math.round(lean * 7), 0));
+      return out;
+    },
+  },
+
+  eiffel: {
+    label: "エッフェル塔", where: "フランス / 世界遺産（パリのセーヌ河岸）", alias: "eiffel tower えっふぇる",
+    real: { w: 125, d: 125, h: 330 }, scale: 2.5,
+    note: "四本の脚が曲線を描いて集まる形。格子は表現できないので、柱と展望台の面で表しています。",
+    parts: (c) => {
+      const out = [];
+      const H = c.m(330), half0 = Math.round(c.m(125) / 2), legW = Math.max(1, c.m(6));
+      // 脚。上に行くほど内側へ寄る（実物の曲線に近づけて 2 乗で寄せる）
+      const steps = Math.max(8, Math.round(H));
+      for (let i = 0; i < steps; i++) {
+        const t = i / (steps - 1);
+        const off = Math.round(half0 * Math.pow(1 - t, 2));
+        if (off <= 0) break;
+        for (const sx of [-off, off]) {
+          for (const sz of [-off, off]) {
+            out.push(mid(pBox(c.st, "minecraft:iron_block", legW, 1, legW), i, sx, sz));
+          }
+        }
+      }
+      // 塔身（脚が集まったあと）と展望台
+      const shaftFrom = Math.round(H * 0.55);
+      out.push(mid(pBox(c.st, "minecraft:iron_block", Math.max(3, c.m(20)), H - shaftFrom, Math.max(3, c.m(20)),
+        { hollow: true, wall: 1 }), shaftFrom));
+      for (const [hm, wm] of [[57, 65], [115, 40], [276, 20]]) {
+        out.push(mid(pBox(c.st, "minecraft:iron_bars", c.m(wm), Math.max(1, c.m(4)), c.m(wm),
+          { hollow: true, wall: Math.max(1, c.m(3)) }), c.m(hm)));
+      }
+      out.push(mid(pColumn(c.st, "minecraft:iron_block", 0, c.m(24)), H));
+      return out;
+    },
+  },
+
+  tokyo_tower: {
+    label: "東京タワー", where: "日本", alias: "tokyo tower とうきょうたわー",
+    real: { w: 88, d: 88, h: 333 }, scale: 2.5,
+    note: "四本脚の鉄塔。赤と白の塗り分けを、段ごとのブロックで表しています。",
+    parts: (c) => {
+      const out = [];
+      const H = c.m(333), half0 = Math.round(c.m(88) / 2), legW = Math.max(1, c.m(5));
+      const band = Math.max(2, Math.round(H / 14));
+      const steps = Math.max(8, Math.round(H));
+      for (let i = 0; i < steps; i++) {
+        const t = i / (steps - 1);
+        const off = Math.round(half0 * Math.pow(1 - t, 1.6));
+        if (off <= 0) break;
+        const block = Math.floor(i / band) % 2 === 0 ? "minecraft:red_concrete" : "minecraft:white_concrete";
+        for (const sx of [-off, off]) {
+          for (const sz of [-off, off]) out.push(mid(pBox(c.st, block, legW, 1, legW), i, sx, sz));
+        }
+      }
+      const shaftFrom = Math.round(H * 0.45);
+      out.push(mid(pBox(c.st, "minecraft:red_concrete", Math.max(3, c.m(14)), H - shaftFrom, Math.max(3, c.m(14)),
+        { hollow: true, wall: 1 }), shaftFrom));
+      out.push(mid(pBox(c.st, "minecraft:white_concrete", c.m(24), Math.max(2, c.m(9)), c.m(24),
+        { hollow: true, wall: Math.max(1, c.m(4)) }), c.m(120)));   // 大展望台
+      out.push(mid(pBox(c.st, "minecraft:white_concrete", c.m(14), Math.max(2, c.m(6)), c.m(14),
+        { hollow: true, wall: Math.max(1, c.m(3)) }), c.m(223)));   // 特別展望台
+      out.push(mid(pColumn(c.st, "minecraft:iron_block", 0, c.m(30)), H));
+      return out;
+    },
+  },
+
+  arc_de_triomphe: {
+    label: "凱旋門", where: "フランス / パリ", alias: "arc de triomphe がいせんもん",
+    real: { w: 45, d: 22, h: 50 }, scale: 1,
+    note: "エトワール凱旋門。大アーチと、側面の小アーチをくり抜いた形です。",
+    parts: (c) => {
+      const out = [];
+      const w = c.m(45), d = c.m(22), h = c.m(50);
+      out.push(mid(pBox(c.st, "minecraft:smooth_sandstone", w, h, d), 0));
+      // 正面の大アーチ（南北に貫通）
+      out.push(carve(mid(pArchVoid(c.st, c.m(15), c.m(29), d + 2), 0)));
+      // 側面の小アーチ（東西に貫通）。奥行き方向にくり抜くので、幅と奥行きを入れ替える
+      const side = pArchVoid(c.st, c.m(9), c.m(19), w + 2);
+      const rotated = makeGrid(side.sz, side.sy, side.sx, c.st);
+      const airIdx = paletteIndex(rotated, { id: "minecraft:air", props: {}, kind: K.BLOCK, dir: DIR.NONE });
+      for (let y = 0; y < side.sy; y++) {
+        for (let z = 0; z < side.sz; z++) {
+          for (let x = 0; x < side.sx; x++) {
+            if (side.layers[y][z * side.sx + x]) gSetIdx(rotated, z, y, x, airIdx);
+          }
+        }
+      }
+      out.push(carve(mid(rotated, 0)));
+      // 屋根の縁取り
+      out.push(mid(pBox(c.st, "minecraft:sandstone", w + 2, Math.max(1, c.m(2)), d + 2), h));
+      return out;
+    },
+  },
+};
+
+/** 名前・別名・所在で絞り込む。日本語でも英語でも当たるようにする */
+function searchLandmarks(query) {
+  const q = String(query || "").trim().toLowerCase();
+  const all = Object.entries(LANDMARKS).map(([key, v]) => Object.assign({ key }, v));
+  if (!q) return all;
+  return all.filter((l) =>
+    (l.key + " " + l.label + " " + l.where + " " + (l.alias || "")).toLowerCase().includes(q));
+}
+
+/**
+ * 外面だけを残す。ピラミッドのように中身が詰まったものは、そのままだと
+ * 数十万ブロックになるので、実際に建てるときは殻だけにすることが多い。
+ * 6 近傍のどれかが空なら表面、という判定（fillSolid の収縮と同じ考え方）。
+ */
+function shellGrid(g) {
+  const out = makeGrid(g.sx, g.sy, g.sz, null);
+  out.source = g.source;
+  out.title = g.title;
+  const map = g.palette.map((e, i) => (i === 0 ? 0 : paletteIndex(out, e)));
+  const at = (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= g.sx || y >= g.sy || z >= g.sz)
+    ? 0 : g.layers[y][z * g.sx + x];
+  for (let y = 0; y < g.sy; y++) {
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        const idx = g.layers[y][z * g.sx + x];
+        if (!idx) continue;
+        const inner = at(x - 1, y, z) && at(x + 1, y, z) && at(x, y - 1, z) &&
+          at(x, y + 1, z) && at(x, y, z - 1) && at(x, y, z + 1);
+        if (!inner) out.layers[y][z * g.sx + x] = map[idx];
+      }
+    }
+  }
+  return out;
+}
+
+/** プリセットから図面を作る */
+function buildLandmark(st) {
+  const def = LANDMARKS[st.landmark] || LANDMARKS.taj_mahal;
+  // lmScale が 0（未指定）なら、その建物の既定スケールを使う
+  const scale = Math.min(8, Math.max(0.25, Number(st.lmScale) || def.scale));
+  const c = {
+    st,
+    scale,
+    m: (meters) => Math.max(1, Math.round(Number(meters) / scale)),
+  };
+  let g = assembleParts(def.parts(c), st,
+    def.label + "（1 ブロック = " + scale + "m）");
+  if (st.lmShell) g = shellGrid(g);
+  g.source = "landmark";
+  g.landmark = def;
+  g.scale = scale;
+  return g;
+}
+
+/** 実寸とスケールから、出来上がりのブロック数を出す（描く前に見せる用） */
+function landmarkSize(def, scale) {
+  const s = Math.min(8, Math.max(0.25, Number(scale) || def.scale));
+  return {
+    scale: s,
+    w: Math.max(1, Math.round(def.real.w / s)),
+    d: Math.max(1, Math.round(def.real.d / s)),
+    h: Math.max(1, Math.round(def.real.h / s)),
+  };
+}
+
 /** state から図面を作る。ここが唯一の入口 */
 /** 読み込んだファイルのグリッド。state には入れない（大きすぎるので保存もしない） */
 let loadedGrid = null;
@@ -1327,7 +1941,9 @@ function build(st) {
     // 読み込み前は空のグリッドを返す。描画側は「まだ無い」として扱える
     return loadedGrid || makeGrid(1, 1, 1, st);
   }
-  if (st.mode === "building") return buildBuilding(st);
+  if (st.mode === "building") {
+    return st.bSource === "landmark" ? buildLandmark(st) : buildBuilding(st);
+  }
   const shape = SHAPES[st.shape] ? st.shape : "sphere";
   return SHAPES[shape].build(st);
 }
@@ -1820,6 +2436,31 @@ function computeWarnings(st, g) {
   const out = [];
   const total = countBlocks(g);
 
+  if (st.mode === "building" && st.bSource === "landmark") {
+    const def = LANDMARKS[st.landmark];
+    if (def) {
+      const size = landmarkSize(def, st.lmScale);
+      out.push({
+        level: "info",
+        msg: def.label + " を 1 ブロック = " + size.scale + "m で起こしています（実寸 " +
+          def.real.w + "×" + def.real.d + "×" + def.real.h + "m）。実測の再現ではなく、単純化した外形です。",
+      });
+      if (Math.max(g.sx, g.sz, g.sy) > MAX_LANDMARK_SIDE) {
+        out.push({ level: "warn", msg: "図面が大きすぎます。1 ブロックあたりの m を増やしてください。" });
+      }
+    }
+    if (total > 50000 && !st.lmShell) {
+      out.push({
+        level: "warn",
+        msg: "総ブロック数が " + total.toLocaleString() + " です。「外面だけにする」で大きく減らせます。",
+      });
+    }
+    if (Math.max(g.sx, g.sy, g.sz) > 96) {
+      out.push({ level: "warn", msg: "図面が大きいため、描画に時間がかかることがあります。" });
+    }
+    return out;
+  }
+
   if (st.mode === "building") {
     const d = buildingDims(st);
     const wallH = d.fh - 1;                       // 床の上に立つ壁の高さ
@@ -2196,6 +2837,17 @@ function renderMode() {
 function renderBuilding() {
   if (state.mode !== "building") return;
 
+  const isLandmark = state.bSource === "landmark";
+  for (const b of document.querySelectorAll("#bsource button")) {
+    b.setAttribute("aria-selected", String(b.dataset.bsource === state.bSource));
+  }
+  $("#landmark-panel").hidden = !isLandmark;
+  $("#size-desc").hidden = isLandmark;
+  $("#building-info").hidden = isLandmark;
+  $("#fs-size").hidden = isLandmark;
+  $("#fs-bblocks").hidden = isLandmark;
+  if (isLandmark) { renderLandmarks(); return; }
+
   const params = $("#building-params");
   params.textContent = "";
   params.appendChild(numberGrid(BUILDING_FIELDS, () => { renderBuildingInfo(); renderOutputs(); }));
@@ -2224,6 +2876,82 @@ function renderBuilding() {
     ]));
   }
   renderBuildingInfo();
+}
+
+function renderLandmarks() {
+  const q = $("#lm-query");
+  if (q.value !== state.lmQuery) q.value = state.lmQuery;
+
+  const list = $("#lm-list");
+  list.textContent = "";
+  const hits = searchLandmarks(state.lmQuery);
+  if (!hits.length) {
+    list.appendChild(h("p", { class: "lm-note", text: "その名前の建物は収録していません。" }));
+  }
+  for (const l of hits) {
+    list.appendChild(h("button", {
+      type: "button", class: "lm-card", "aria-current": String(state.landmark === l.key),
+      onclick: () => {
+        state.landmark = l.key;
+        state.lmScale = 0;              // 建物ごとの既定スケールに戻す
+        layerIndex = 0;
+        renderAll();
+      },
+    }, [
+      h("span", { class: "lm-name", text: l.label }),
+      h("span", { class: "lm-meta", text: l.where + " ／ 実寸 " + l.real.w + "×" + l.real.d + "×" + l.real.h + "m" }),
+    ]));
+  }
+
+  const info = $("#lm-info");
+  info.textContent = "";
+  const def = LANDMARKS[state.landmark];
+  if (!def) return;
+  const size = landmarkSize(def, state.lmScale);
+  const row = (k, v) => [h("dt", { text: k }), h("dd", { text: v })];
+  info.appendChild(h("div", { class: "import-info", style: "margin-top:12px" }, [
+    h("div", { class: "file", text: def.label }),
+    h("dl", {}, [
+      ...row("実寸", def.real.w + " × " + def.real.d + " × " + def.real.h + " m"),
+      ...row("スケール", "1 ブロック = " + size.scale + " m"),
+      ...row("目安", size.w + " × " + size.d + " × " + size.h + " ブロック"),
+    ]),
+    h("p", { class: "lm-note", text: def.note }),
+  ]));
+
+  info.appendChild(h("div", { class: "field", style: "margin-top:12px" }, [
+    h("label", { for: "f-lmScale", text: "1 ブロック = 何 m（0 でその建物の既定）" }),
+    h("input", {
+      type: "number", id: "f-lmScale", min: 0, max: 8, step: 0.25, value: state.lmScale,
+      oninput: (e) => {
+        const v = Number(e.target.value);
+        state.lmScale = isFinite(v) ? Math.max(0, Math.min(8, v)) : 0;
+        renderLandmarkInfoOnly();
+        renderOutputs();
+      },
+    }),
+    h("p", { class: "hint", text: "小さくすると大きく精密に、大きくすると小さく手軽になります" }),
+  ]));
+
+  info.appendChild(h("div", { class: "sw" }, [
+    h("input", {
+      type: "checkbox", id: "f-lmShell", checked: Boolean(state.lmShell),
+      onchange: (e) => { state.lmShell = e.target.checked; renderAll(); },
+    }),
+    h("label", { for: "f-lmShell", text: "外面だけにする（中身をくり抜いて材料を減らす）" }),
+  ]));
+}
+
+/** スケールを触ったときに、一覧を作り直さず数字だけ更新する */
+function renderLandmarkInfoOnly() {
+  const def = LANDMARKS[state.landmark];
+  if (!def) return;
+  const size = landmarkSize(def, state.lmScale);
+  const dd = $("#lm-info").querySelectorAll("dd");
+  if (dd.length >= 3) {
+    dd[1].textContent = "1 ブロック = " + size.scale + " m";
+    dd[2].textContent = size.w + " × " + size.d + " × " + size.h + " ブロック";
+  }
 }
 
 /** メートル → ブロックの換算結果を出す。端数の丸めがどう効いたかが分かるように */
@@ -2542,6 +3270,202 @@ function blockColor(entry, g) {
   return col;
 }
 
+/* ---------- 完成イメージ（3D ビュー） ----------
+
+   積み上がった姿を、好きな向きから見られるようにする。
+   3D ライブラリは使わない（ビルド不要・依存なしを崩さないため）。
+   やっていることは次の 3 つだけ。
+
+     1. 面の露出を先に求める（隣が埋まっている面は、どの向きからも見えない）
+     2. カメラの向き（左右の回転 yaw と、見下ろし／見上げ pitch）で座標を回し、
+        正射影で平面に落とす。図面なので遠近はつけない
+     3. 奥から手前へ、法線がこちらを向いている面だけを塗る
+
+   面の露出はカメラに依存しないので、図面ごとに 1 回だけ計算して使い回す。 */
+
+/** 面の向き。順に +X（東）/ -X / +Y（上）/ -Y / +Z（南）/ -Z */
+const FACES = [
+  { n: [1, 0, 0], d: [1, 0, 0], bit: 1 },
+  { n: [-1, 0, 0], d: [-1, 0, 0], bit: 2 },
+  { n: [0, 1, 0], d: [0, 1, 0], bit: 4 },
+  { n: [0, -1, 0], d: [0, -1, 0], bit: 8 },
+  { n: [0, 0, 1], d: [0, 0, 1], bit: 16 },
+  { n: [0, 0, -1], d: [0, 0, -1], bit: 32 },
+];
+
+/** 立方体の 8 頂点（中心を原点とした ±0.5） */
+const CUBE_CORNERS = [
+  [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+  [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+];
+/** 各面を作る頂点の並び（外から見て反時計回り） */
+const FACE_CORNERS = [
+  [1, 5, 6, 2],   // +X
+  [4, 0, 3, 7],   // -X
+  [3, 2, 6, 7],   // +Y
+  [4, 5, 1, 0],   // -Y
+  [5, 4, 7, 6],   // +Z
+  [0, 1, 2, 3],   // -Z
+];
+
+/**
+ * 露出している面のビットマスクを、図面全体ぶん作る。
+ * maxY を指定すると、そこで切った上面も露出として扱う（途中まで積んだ状態）。
+ */
+function surfaceMask(g, maxY) {
+  const H = Math.max(1, Math.min(g.sy, maxY == null ? g.sy : maxY));
+  const at = (x, y, z) => {
+    if (x < 0 || y < 0 || z < 0 || x >= g.sx || y >= H || z >= g.sz) return 0;
+    return g.layers[y][z * g.sx + x];
+  };
+  const masks = [];
+  let faces = 0;
+  for (let y = 0; y < H; y++) {
+    const m = new Uint8Array(g.sx * g.sz);
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        if (!at(x, y, z)) continue;
+        let bits = 0;
+        for (const f of FACES) {
+          if (!at(x + f.d[0], y + f.d[1], z + f.d[2])) { bits |= f.bit; faces++; }
+        }
+        m[z * g.sx + x] = bits;
+      }
+    }
+    masks.push(m);
+  }
+  return { masks, H, faces };
+}
+
+/** yaw（左右）と pitch（上下）の回転。正射影なので、返した x/y をそのまま画面に使う */
+function makeCamera(yaw, pitch) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  // 先に Y 軸まわりに回してから、X 軸まわりに倒す
+  return (x, y, z) => {
+    const rx = x * cy - z * sy;
+    const rz = x * sy + z * cy;
+    return [rx, y * cp - rz * sp, y * sp + rz * cp];
+  };
+}
+
+const LIGHT = (() => {
+  const v = [0.4, 0.85, 0.3];
+  const len = Math.hypot(v[0], v[1], v[2]);
+  return v.map((c) => c / len);
+})();
+
+/**
+ * 3D ビューを描く。opts は { yaw, pitch, zoom, maxY, quick }。
+ * quick は操作中の簡易描画で、陰影の計算を省く。
+ */
+function draw3D(canvas, g, opts) {
+  const o = opts || {};
+  const zoom = Math.max(1, Math.min(24, o.zoom || 6));
+  const cam = makeCamera(o.yaw || 0, o.pitch || 0);
+  const { masks, H } = surfaceMask(g, o.maxY);
+
+  const cx = (g.sx - 1) / 2, cy = (H - 1) / 2, cz = (g.sz - 1) / 2;
+
+  // 見えている面を集める。法線がこちらを向いていないものは、この時点で捨てる
+  const camN = FACES.map((f) => cam(f.n[0], f.n[1], f.n[2]));
+  const shade = FACES.map((f, i) => {
+    const dot = f.n[0] * LIGHT[0] + f.n[1] * LIGHT[1] + f.n[2] * LIGHT[2];
+    return o.quick ? 0 : dot * 0.34;          // 上を向く面ほど明るく
+  });
+
+  const items = [];
+  for (let y = 0; y < H; y++) {
+    const m = masks[y];
+    for (let z = 0; z < g.sz; z++) {
+      for (let x = 0; x < g.sx; x++) {
+        const bits = m[z * g.sx + x];
+        if (!bits) continue;
+        const p = cam(x - cx, y - cy, z - cz);
+        items.push({ x, y, z, bits, px: p[0], py: p[1], depth: p[2] });
+      }
+    }
+  }
+  items.sort((a, b) => a.depth - b.depth);     // 奥から手前へ
+
+  // 画面に収まる位置を出す
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY2 = -Infinity;
+  for (const it of items) {
+    if (it.px < minX) minX = it.px;
+    if (it.px > maxX) maxX = it.px;
+    if (it.py < minY) minY = it.py;
+    if (it.py > maxY2) maxY2 = it.py;
+  }
+  if (!items.length) { minX = maxX = minY = maxY2 = 0; }
+
+  const pad = zoom * 2;
+  const width = Math.max(32, Math.round((maxX - minX + 2) * zoom) + pad * 2);
+  const height = Math.max(32, Math.round((maxY2 - minY + 2) * zoom) + pad * 2);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const ox = pad - minX * zoom;
+  const oy = pad + maxY2 * zoom;               // 画面の y は下向きなので反転する
+  const project = (vx, vy, vz) => {
+    const p = cam(vx, vy, vz);
+    return [ox + p[0] * zoom, oy - p[1] * zoom];
+  };
+
+  let drawn = 0;
+  for (const it of items) {
+    const base = blockColor(g.palette[g.layers[it.y][it.z * g.sx + it.x]], g);
+    for (let fi = 0; fi < 6; fi++) {
+      if (!(it.bits & FACES[fi].bit)) continue;
+      if (camN[fi][2] <= 0.0001) continue;     // 裏を向いている面は描かない
+      const corners = FACE_CORNERS[fi];
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const c = CUBE_CORNERS[corners[k]];
+        const pt = project(it.x - cx + c[0], it.y - cy + c[1], it.z - cz + c[2]);
+        if (k === 0) ctx.moveTo(pt[0], pt[1]); else ctx.lineTo(pt[0], pt[1]);
+      }
+      ctx.closePath();
+      ctx.fillStyle = shade[fi] ? shadeColor(base, shade[fi]) : base;
+      ctx.fill();
+      drawn++;
+    }
+  }
+  return { faces: drawn, blocks: items.length };
+}
+
+/** 色を明るく／暗くする。#rrggbb と hsl() のどちらでも扱えるようにしておく */
+const shadeCache = new Map();
+function shadeColor(color, amount) {
+  const key = color + "|" + amount.toFixed(3);
+  const hit = shadeCache.get(key);
+  if (hit) return hit;
+  let out = color;
+  const hex = /^#([0-9a-f]{6})$/i.exec(color);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const t = amount >= 0 ? v + (255 - v) * amount : v * (1 + amount);
+      return Math.max(0, Math.min(255, Math.round(t)));
+    });
+    out = "rgb(" + ch.join(",") + ")";
+  } else {
+    const hsl = /^hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\s*\)$/i.exec(color);
+    if (hsl) {
+      const l = Math.max(0, Math.min(100, Number(hsl[3]) * (1 + amount)));
+      out = "hsl(" + hsl[1] + " " + hsl[2] + "% " + l.toFixed(1) + "%)";
+    }
+  }
+  shadeCache.set(key, out);
+  return out;
+}
+
 /** 平面図。cell はセルの一辺（px）、gutter は座標目盛りの帯 */
 function drawPlan(canvas, g, y, opts) {
   const o = opts || {};
@@ -2796,6 +3720,43 @@ function planCellSize(g) {
   return Math.max(6, Math.min(26, Math.floor((avail - 24) / Math.max(g.sx, 1))));
 }
 
+/** 見ている向きを日本語にする。方角はマイクラの座標系（+X が東、+Z が南） */
+function viewLabel(yaw, pitch) {
+  if (pitch >= 80) return "真上から";
+  if (pitch <= -80) return "真下から";
+  const dirs = ["南から", "南西から", "西から", "北西から", "北から", "北東から", "東から", "南東から"];
+  const dir = dirs[Math.round(((yaw % 360) + 360) % 360 / 45) % 8];
+  const tilt = pitch > 15 ? "見下ろし" : (pitch < -15 ? "見上げ" : "水平");
+  return dir + "（" + tilt + "）";
+}
+
+function renderIso(g) {
+  const hMax = Math.max(1, g.sy);
+  if (!isoHeight || isoHeight > hMax) isoHeight = hMax;
+
+  const slider = $("#iso-height");
+  slider.max = String(hMax);
+  slider.value = String(isoHeight);
+  $("#iso-zoom").value = String(isoZoom);
+  $("#iso-yaw").value = String(Math.round(((isoYaw % 360) + 360) % 360));
+  $("#iso-pitch").value = String(Math.round(isoPitch));
+
+  const t0 = Date.now();
+  const res = draw3D($("#iso"), g, {
+    yaw: isoYaw * Math.PI / 180,
+    pitch: isoPitch * Math.PI / 180,
+    zoom: isoZoom, maxY: isoHeight, quick: isoQuick,
+  });
+  const took = Date.now() - t0;
+
+  $("#iso-status").textContent =
+    viewLabel(isoYaw, isoPitch) + "  /  " +
+    (isoHeight >= hMax ? "完成状態" : isoHeight + " 段目まで積んだ状態") +
+    "  /  見えているブロック " + res.blocks.toLocaleString() +
+    "（全 " + countBlocks(g).toLocaleString() + "）  /  面 " + res.faces.toLocaleString() +
+    (took > 400 ? "  /  描画 " + took + "ms。重いときは「大きさ」を下げてください" : "");
+}
+
 function renderSheet(g) {
   const wrap = $("#sheet");
   wrap.textContent = "";
@@ -2841,6 +3802,7 @@ function renderOutputs() {
   slider.value = String(layerIndex);
   $("#layer-label").textContent = (layerIndex + 1) + " 段目 / 全 " + g.sy + " 段";
 
+  if (isoHeight > g.sy) isoHeight = 0;      // 別の図面に切り替えたら完成状態に戻す
   drawPlan($("#plan"), g, layerIndex, { cell: planCellSize(g), ghost: true });
   drawElevation($("#elev"), g, elevMode);
   renderLegend(g);
@@ -2851,6 +3813,7 @@ function renderOutputs() {
     "この段 " + countLayer(g, layerIndex).toLocaleString() +
     (countKind(g, K.STAIR) ? "  /  階段 " + countKind(g, K.STAIR).toLocaleString() : "");
 
+  if (activeTab === "iso") renderIso(g);
   if (activeTab === "sheet") renderSheet(g);
   if (activeTab === "mats") renderMaterials(g);
   if (activeTab === "text") $("#text-out").textContent = buildText(state, g);
@@ -3056,6 +4019,14 @@ function initEvents() {
     });
   }
 
+  for (const b of document.querySelectorAll("#bsource button")) {
+    b.addEventListener("click", () => { state.bSource = b.dataset.bsource; layerIndex = 0; renderAll(); });
+  }
+  $("#lm-query").addEventListener("input", (e) => {
+    state.lmQuery = e.target.value;
+    renderLandmarks();
+  });
+
   $("#btn-open-repo").addEventListener("click", openRepo);
   $("#repo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { openRepo(); e.preventDefault(); }
@@ -3089,6 +4060,55 @@ function initEvents() {
     e.preventDefault();
     state.mode = "import";
     loadSchematic(f);
+  });
+
+  $("#iso-yaw").addEventListener("input", (e) => { isoYaw = Number(e.target.value); renderOutputs(); });
+  $("#iso-pitch").addEventListener("input", (e) => { isoPitch = Number(e.target.value); renderOutputs(); });
+  $("#iso-height").addEventListener("input", (e) => { isoHeight = Number(e.target.value); renderOutputs(); });
+  $("#iso-zoom").addEventListener("input", (e) => { isoZoom = Number(e.target.value); renderOutputs(); });
+  $("#iso-spin").addEventListener("click", () => { isoYaw = (isoYaw + 90) % 360; renderOutputs(); });
+  for (const b of document.querySelectorAll("[data-view]")) {
+    b.addEventListener("click", () => {
+      const [y, p] = b.dataset.view.split(",").map(Number);
+      isoYaw = y; isoPitch = p;
+      renderOutputs();
+    });
+  }
+
+  // 図の上をドラッグして回す。動かしている間は陰影を省いて軽くする
+  (() => {
+    const canvas = $("#iso");
+    let dragging = false, lastX = 0, lastY = 0;
+    const start = (e) => {
+      dragging = true; isoQuick = true;
+      lastX = e.clientX; lastY = e.clientY;
+      canvas.style.cursor = "grabbing";
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    };
+    const move = (e) => {
+      if (!dragging) return;
+      isoYaw = (isoYaw + (e.clientX - lastX) * 0.6) % 360;
+      isoPitch = Math.max(-89, Math.min(89, isoPitch + (e.clientY - lastY) * 0.5));
+      lastX = e.clientX; lastY = e.clientY;
+      renderOutputs();
+      e.preventDefault();
+    };
+    const end = () => {
+      if (!dragging) return;
+      dragging = false; isoQuick = false;
+      canvas.style.cursor = "grab";
+      renderOutputs();                       // 陰影つきで描き直す
+    };
+    canvas.addEventListener("pointerdown", start);
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerup", end);
+    canvas.addEventListener("pointercancel", end);
+    canvas.addEventListener("pointerleave", end);
+  })();
+  $("#iso-png").addEventListener("click", () => {
+    $("#iso").toBlob((blob) => {
+      if (blob) downloadBlob(blob, "blueprint-iso.png");
+    });
   });
 
   $("#mats-per-layer").addEventListener("change", renderOutputs);
@@ -3779,6 +4799,238 @@ function runSelfTest() {
       }
     }
     return true;
+  })());
+
+
+  // --- 18. 有名建築のプリセット ---
+  const lmSt = (key, over) => st(Object.assign({ mode: "building", bSource: "landmark", landmark: key }, over || {}));
+
+  ok("11 件が収録されている", Object.keys(LANDMARKS).length === 11);
+  ok("すべての建物が例外なく生成できる", (() => {
+    for (const key of Object.keys(LANDMARKS)) {
+      try {
+        const g = buildLandmark(lmSt(key));
+        if (!g || g.sy < 2 || !countBlocks(g)) return false;
+      } catch (e) { return false; }
+    }
+    return true;
+  })());
+  ok("どの建物も実寸÷スケールとおおむね一致する（±20%）", (() => {
+    // 部品の組み方を間違えると、ここがまず外れる
+    for (const key of Object.keys(LANDMARKS)) {
+      const g = buildLandmark(lmSt(key));
+      const want = landmarkSize(LANDMARKS[key], 0);
+      const off = (a, b) => Math.abs(a - b) / b;
+      if (off(g.sx, want.w) > 0.2 || off(g.sz, want.d) > 0.2 || off(g.sy, want.h) > 0.2) return false;
+    }
+    return true;
+  })());
+  ok("どの建物にも必ず定義が揃っている", (() => {
+    for (const [key, d] of Object.entries(LANDMARKS)) {
+      if (!d.label || !d.where || !d.note) return false;
+      if (!d.real || !(d.real.w > 0) || !(d.real.d > 0) || !(d.real.h > 0)) return false;
+      if (!(d.scale > 0) || typeof d.parts !== "function") return false;
+      if (!/^[a-z0-9_]+$/.test(key)) return false;
+    }
+    return true;
+  })());
+  ok("収録した建物はどれも空中に浮かない（最下段にブロックがある）", (() => {
+    for (const key of Object.keys(LANDMARKS)) {
+      if (!countLayer(buildLandmark(lmSt(key)), 0)) return false;
+    }
+    return true;
+  })());
+
+  ok("スケールを大きくすると図面は小さくなる", (() => {
+    const a = buildLandmark(lmSt("giza", { lmScale: 2 }));
+    const b = buildLandmark(lmSt("giza", { lmScale: 4 }));
+    return b.sx < a.sx && b.sy < a.sy;
+  })());
+  ok("スケール 0 は建物ごとの既定を使う",
+    buildLandmark(lmSt("giza")).scale === LANDMARKS.giza.scale);
+  ok("ギザは四角錐そのもの（最下段が最大、頂点が 1 マス）", (() => {
+    const g = buildLandmark(lmSt("giza", { lmScale: 8 }));
+    return countLayer(g, 0) === g.sx * g.sz && countLayer(g, g.sy - 1) <= 4;
+  })());
+
+  ok("外面だけにすると、中身が消えてブロックが減る", (() => {
+    const solid = buildLandmark(lmSt("giza", { lmScale: 8 }));
+    const shell = buildLandmark(lmSt("giza", { lmScale: 8, lmShell: true }));
+    if (shell.sx !== solid.sx || shell.sy !== solid.sy) return false;
+    if (countBlocks(shell) >= countBlocks(solid)) return false;
+    // 底の中央は殻の一部なので残り、1 段上の中央は消える
+    const cx = Math.floor(shell.sx / 2), cz = Math.floor(shell.sz / 2);
+    return gGet(shell, cx, 0, cz) !== K.EMPTY && gGet(shell, cx, 1, cz) === K.EMPTY;
+  })());
+  ok("外面だけにしても外形は変わらない", (() => {
+    const solid = buildLandmark(lmSt("giza", { lmScale: 8 }));
+    const shell = buildLandmark(lmSt("giza", { lmScale: 8, lmShell: true }));
+    for (let y = 0; y < solid.sy; y++) if (!countLayer(shell, y)) return false;
+    return true;
+  })());
+
+  ok("建物ごとに材料が違う", (() => {
+    const ids = (key) => new Set(buildMaterials(buildLandmark(lmSt(key))).items.map((i) => i.id));
+    const taj = ids("taj_mahal"), giza = ids("giza"), torii = ids("otorii");
+    return taj.has("minecraft:quartz_block") && giza.has("minecraft:sandstone") &&
+      torii.has("minecraft:red_concrete") && !giza.has("minecraft:quartz_block");
+  })());
+  ok("材料の合計が総ブロック数と一致する", (() => {
+    const g = buildLandmark(lmSt("taj_mahal"));
+    return buildMaterials(g).total === countBlocks(g);
+  })());
+
+  ok("名前で絞り込める（日本語）", searchLandmarks("タージ").length === 1);
+  ok("名前で絞り込める（英語・大文字小文字を無視）", (() => {
+    const a = searchLandmarks("TOWER").map((l) => l.key);
+    return a.includes("eiffel") && a.includes("tokyo_tower") && a.includes("pisa");
+  })());
+  ok("別名でも当たる", searchLandmarks("ぴらみっど").map((l) => l.key)[0] === "giza");
+  ok("空の検索は全件", searchLandmarks("").length === Object.keys(LANDMARKS).length);
+  ok("当たらない検索は 0 件", searchLandmarks("そんな建物はない").length === 0);
+
+  ok("くり抜きが効いている（凱旋門は中央が抜け、隅の脚は残る）", (() => {
+    const g = buildLandmark(lmSt("arc_de_triomphe"));
+    const cx = Math.floor(g.sx / 2), cz = Math.floor(g.sz / 2);
+    // 中央は大アーチで抜ける。横断アーチも中央の帯を通るので、
+    // 残っているべきなのは、その帯から外れた隅の脚
+    return gGet(g, cx, 2, cz) === K.EMPTY && gGet(g, 1, 2, 1) !== K.EMPTY;
+  })());
+  ok("凱旋門は横断アーチが左右に貫通する", (() => {
+    const g = buildLandmark(lmSt("arc_de_triomphe"));
+    const cz = Math.floor(g.sz / 2);
+    // 中央の帯（z=cz）は、東西の端まで 1 マスも埋まっていない
+    for (let x = 0; x < g.sx; x++) if (gGet(g, x, 2, cz)) return false;
+    // その手前（z=1）は、大アーチの開口を除いて脚が残っている
+    return gGet(g, 1, 2, 1) !== K.EMPTY && gGet(g, g.sx - 2, 2, 1) !== K.EMPTY;
+  })());
+  ok("アーチの開口は上に行くほど狭い", (() => {
+    const v = pArchVoid(defaultState(), 15, 12, 1);
+    const width = (y) => { let n = 0; for (let x = 0; x < v.sx; x++) if (gGet(v, x, y, 0)) n++; return n; };
+    return width(0) === 15 && width(v.sy - 1) < width(0) && width(v.sy - 1) > 0;
+  })());
+  ok("台形は下と上で幅が変わる", (() => {
+    const f = pFrustum(defaultState(), "minecraft:stone", 11, 11, 3, 3, 5, {});
+    const w = (y) => { let n = 0; for (let x = 0; x < f.sx; x++) if (gGet(f, x, y, 0 + Math.floor(f.sz / 2))) n++; return n; };
+    return w(0) === 11 && w(4) === 3;
+  })());
+  ok("部品の合成でパレットが混ざらない", (() => {
+    const g = assembleParts([
+      mid(pBox(defaultState(), "minecraft:stone", 3, 2, 3), 0),
+      mid(pBox(defaultState(), "minecraft:oak_planks", 3, 2, 3), 2),
+    ], defaultState(), "テスト");
+    const ids = new Set(g.palette.slice(1).map((e) => e.id));
+    return g.sy === 4 && ids.has("minecraft:stone") && ids.has("minecraft:oak_planks") && ids.size === 2;
+  })());
+  ok("有名建築の source は landmark", buildLandmark(lmSt("pisa")).source === "landmark");
+
+
+  // --- 19. 完成イメージ（3D ビュー） ---
+  const cube = pBox(defaultState(), "minecraft:stone", 3, 3, 3, {});
+
+  ok("内部のブロックは面が 1 つも露出しない", (() => {
+    // 3×3×3 の真ん中だけが完全に埋もれている
+    const { masks } = surfaceMask(cube);
+    return masks[1][1 * 3 + 1] === 0;
+  })());
+  ok("角のブロックは 3 面が露出する", (() => {
+    const { masks } = surfaceMask(cube);
+    const bits = masks[0][0];
+    let n = 0;
+    for (const f of FACES) if (bits & f.bit) n++;
+    return n === 3;
+  })());
+  ok("露出している面の総数が合う", (() => {
+    // 3×3×3 の表面は 6 面 × 9 = 54
+    return surfaceMask(cube).faces === 54;
+  })());
+  ok("積み上げを指定すると、切った上面も露出になる", (() => {
+    const full = surfaceMask(cube);
+    const cut = surfaceMask(cube, 2);
+    // 高さ 2 の直方体は 3×3×2。表面は 2×(3×3) + 4×(3×2) = 18 + 24 = 42
+    return cut.H === 2 && cut.faces === 42 && full.faces === 54;
+  })());
+  ok("空のグリッドでも壊れない", surfaceMask(makeGrid(2, 2, 2, defaultState())).faces === 0);
+
+  ok("回転しても長さが変わらない", (() => {
+    const cam = makeCamera(0.7, 0.4);
+    for (const v of [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 2, 3]]) {
+      const p = cam(v[0], v[1], v[2]);
+      const a = Math.hypot(v[0], v[1], v[2]), b = Math.hypot(p[0], p[1], p[2]);
+      if (Math.abs(a - b) > 1e-9) return false;
+    }
+    return true;
+  })());
+  ok("回転なしでは座標がそのまま", (() => {
+    const p = makeCamera(0, 0)(1, 2, 3);
+    return Math.abs(p[0] - 1) < 1e-9 && Math.abs(p[1] - 2) < 1e-9 && Math.abs(p[2] - 3) < 1e-9;
+  })());
+  ok("左右 90 度で東西と南北が入れ替わる", (() => {
+    const p = makeCamera(Math.PI / 2, 0)(1, 0, 0);
+    return Math.abs(p[0]) < 1e-9 && Math.abs(p[2] - 1) < 1e-9;
+  })());
+  ok("真上から見ると、上面がこちらを向く", (() => {
+    // pitch = +90 度。+Y の法線が、画面の手前（z が正）に来る
+    const cam = makeCamera(0, Math.PI / 2);
+    const up = cam(0, 1, 0);
+    return up[2] > 0.99;
+  })());
+  ok("下から見ると、底面がこちらを向く", (() => {
+    const cam = makeCamera(0, -Math.PI / 2);
+    const down = cam(0, -1, 0);
+    return down[2] > 0.99;
+  })());
+  ok("正面から見ると、上面は見えない", (() => {
+    // pitch = 0 なら +Y の法線は画面と平行で、面としては見えない
+    const cam = makeCamera(0, 0);
+    return Math.abs(cam(0, 1, 0)[2]) < 1e-9;
+  })());
+  ok("どの向きでも、見える面は 3 方向まで", (() => {
+    // 立方体の 6 面のうち、こちらを向くのは同時に 3 つまで
+    for (let yaw = 0; yaw < 360; yaw += 17) {
+      for (let pitch = -80; pitch <= 80; pitch += 23) {
+        const cam = makeCamera(yaw * Math.PI / 180, pitch * Math.PI / 180);
+        let n = 0;
+        for (const f of FACES) if (cam(f.n[0], f.n[1], f.n[2])[2] > 0.0001) n++;
+        if (n > 3) return false;
+      }
+    }
+    return true;
+  })());
+
+  ok("色を明るく・暗くできる（16 進）", (() => {
+    const light = shadeColor("#808080", 0.5), dark = shadeColor("#808080", -0.5);
+    return /^rgb\(/.test(light) && /^rgb\(/.test(dark) && light !== dark;
+  })());
+  ok("色を明るく・暗くできる（hsl）",
+    /^hsl\(200 42% 29\.0%\)$/.test(shadeColor("hsl(200 42% 58%)", -0.5)));
+  ok("知らない書式はそのまま返す", shadeColor("rebeccapurple", 0.5) === "rebeccapurple");
+
+  ok("有名建築の面も数えられる", (() => {
+    for (const key of ["goju_no_to", "taj_mahal", "otorii"]) {
+      const g = buildLandmark(lmSt(key));
+      const { faces } = surfaceMask(g);
+      if (!faces || faces > countBlocks(g) * 6) return false;
+    }
+    return true;
+  })());
+  ok("中身が詰まっているほど、面の割合は小さくなる", (() => {
+    // ピラミッドは中が詰まっているので、ブロック 1 個あたりの露出面はごくわずか
+    const g = buildLandmark(lmSt("giza", { lmScale: 8 }));
+    return surfaceMask(g).faces / countBlocks(g) < 1;
+  })());
+  ok("タージ・マハルの本体には屋上がある", (() => {
+    // 屋上が無いとドームが宙に浮く
+    const g = buildLandmark(lmSt("taj_mahal"));
+    const cx = Math.floor(g.sx / 2), cz = Math.floor(g.sz / 2);
+    let top = -1;
+    for (let y = 0; y < g.sy; y++) if (gGet(g, cx, y, cz)) top = y;
+    return top > 0 && gGet(g, cx, top - 1, cz) !== K.EMPTY;
+  })());
+  ok("見ている向きの説明が出る", (() => {
+    return viewLabel(0, 89) === "真上から" && viewLabel(0, -89) === "真下から" &&
+      /南から/.test(viewLabel(0, 0)) && /水平/.test(viewLabel(0, 0)) &&
+      /見下ろし/.test(viewLabel(45, 30));
   })());
 
   // --- 結果表示 ---
