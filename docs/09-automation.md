@@ -55,6 +55,18 @@ claude -p "lint エラーを直して" \
 
 > `-p` での実行も、デフォルトでは再開可能なセッションを作ります。
 
+**無人実行で知っておくと良い最近の変更**
+
+- **`--restricted`**（または `CLAUDE_CODE_RESTRICTED=1`、v2.1.248〜）: **コマンドを実行するツールを持たずに**起動します。WebFetch も外れ、ファイルツールは作業ディレクトリに限定、読み込む設定は管理設定と `--settings` のみ、`bypassPermissions` は拒否されます。共有マシンで評価用ハーネスから `claude` を呼ぶ場合などに使います。外したツールを戻すには `--tools "Bash,Read,Edit"` のように明示します
+  ```bash
+  claude --restricted -p "src/ の SQL インジェクションのリスクをレビューして"
+  ```
+- **バックグラウンドコマンドの時間制限**は、**無人のセッション（`-p`・Agent SDK・CI・クラウド）にだけ**かかります（`timeout` 指定の既定 30 分、最大 2 時間）。ターミナル・デスクトップ・VS Code のセッションに制限はありません
+- 非対話セッションでは、サーバーエラーや接続断で**途中で切れた応答を自動で続き**から再開します（テキストのみでツール呼び出しを含まない場合）
+- サブエージェントが `maxTurns` に達して止まったときは、出力が「途中まで」と明示され、`SendMessage` で続けさせるヒントが付きます
+- **`--max-budget-usd`** はサブエージェントにも効きます
+- `claude attach <名前>` / `claude logs <名前>` は、**セッション名の一部**でも指定できます。`claude --desktop` でデスクトップアプリを現在のディレクトリで開けます
+
 ---
 
 ## 9-2. 多数のファイルに一括適用する（ファンアウト）
@@ -162,7 +174,8 @@ claude stop 7c5dcf5d     # 停止
 - 同一マシン内はソケット経由で、**Anthropic のサーバーを経由しません**。別マシンや Web のセッションへは Remote Control 経由で届きます
 - 別のセッションに「作業が終わったら知らせて」と依頼することもできます（1 回だけ通知。12 時間で失効）
 
-**対応環境**: macOS / Linux / WSL 2 は v2.1.224 以降、ネイティブ Windows は v2.1.234 以降。Amazon Bedrock、Claude Platform on AWS、Google Cloud の Agent Platform、Microsoft Foundry では利用できません。
+**対応環境**: macOS / Linux / WSL 2 は v2.1.224 以降、ネイティブ Windows は v2.1.234 以降。**Amazon Bedrock・Google Cloud の Agent Platform・Microsoft Foundry でも、同じマシン上のセッション同士なら使えるようになりました**（v2.1.240〜250 の間に対応）。Claude Platform on AWS については、公式ドキュメントの Availability を確認してください。
+
 
 **受信を制御する**
 

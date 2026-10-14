@@ -147,15 +147,16 @@ Claude Code を使うにはアカウントが必要です。以下のいずれ�
 
 | エイリアス | 用途 |
 | --- | --- |
-| `sonnet` | 最新の Sonnet。**日常のコーディングはこれで十分** |
-| `opus` | 最新の Opus（現在は Opus 5）。複雑な推論・設計判断 |
-| `haiku` | 高速・低コスト。単純な作業やサブエージェント向け |
-| `fable` | 最も難しく長い作業向け。既定にはならない |
-| `best` | Fable 5 が使えるならそれ、なければ最新の Opus |
+| `sonnet` | 最新の Sonnet（現在は **Sonnet 5.5**）。**日常のコーディングはこれで十分** |
+| `opus` | 最新の Opus（現在は **Opus 5.5**）。複雑な推論・設計判断。**Anthropic API・Pro・Max・Team・Enterprise の既定** |
+| `haiku` | 最新の Haiku（現在は **Haiku 5.5**）。高速・低コスト。単純な作業やサブエージェント向け |
+| `fable` | 現在は **Fable 5.1**。最も難しく長い作業向け。**既定にはならない**（選んだときだけ使われる） |
+| `best` | Fable が使えるならそれ、なければ最新の Opus |
 | **`opusplan`** | **計画は Opus、実行は Sonnet** に自動で切り替える |
 | `sonnet[1m]` / `opus[1m]` | 100万トークンのコンテキストウィンドウ |
 
-Opus 5 と Sonnet 5 は**100万トークンのコンテキストウィンドウ**を持ちます（プロバイダによっては 1M 版の明示的な選択が必要）。
+Fable 5.1・Sonnet 5 以降・Haiku 5.5・Opus 4.7 以降は、**`[1m]` を付けなくても 100万トークンのコンテキストウィンドウ**です（Bedrock・Vertex・Foundry・ゲートウェイも同様）。200K に戻したいときは `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` を設定します。
+エイリアスの解決先はプロバイダで異なり、Bedrock・Agent Platform では `sonnet` / `haiku` が古い世代を指します（詳細は [14 新機能まとめ](14-whats-new.md#model)）。
 `opusplan` は「計画の質は担保しつつ実装コストは抑えたい」ときに便利です。
 
 ---
