@@ -141,6 +141,24 @@ Claude Code を使うにはアカウントが必要です。以下のいずれ�
 > **注意**
 > Web 版（Claude Code on the web）は Pro / Max / Team、および premium seat などを持つ Enterprise ユーザー向けのリサーチプレビューとして提供されています。利用可否はプランによって変わります。
 
+### 使えるモデル
+
+`/model` で切り替えます。用途に応じて使い分けるとコストと精度のバランスが取れます。
+
+| エイリアス | 用途 |
+| --- | --- |
+| `sonnet` | 最新の Sonnet（現在は **Sonnet 5.5**）。**日常のコーディングはこれで十分** |
+| `opus` | 最新の Opus（現在は **Opus 5.5**）。複雑な推論・設計判断。**Anthropic API・Pro・Max・Team・Enterprise の既定** |
+| `haiku` | 最新の Haiku（現在は **Haiku 5.5**）。高速・低コスト。単純な作業やサブエージェント向け |
+| `fable` | 現在は **Fable 5.1**。最も難しく長い作業向け。**既定にはならない**（選んだときだけ使われる） |
+| `best` | Fable が使えるならそれ、なければ最新の Opus |
+| **`opusplan`** | **計画は Opus、実行は Sonnet** に自動で切り替える |
+| `sonnet[1m]` / `opus[1m]` | 100万トークンのコンテキストウィンドウ |
+
+Fable 5.1・Sonnet 5 以降・Haiku 5.5・Opus 4.7 以降は、**`[1m]` を付けなくても 100万トークンのコンテキストウィンドウ**です（Bedrock・Vertex・Foundry・ゲートウェイも同様）。200K に戻したいときは `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` を設定します。
+エイリアスの解決先はプロバイダで異なり、Bedrock・Agent Platform では `sonnet` / `haiku` が古い世代を指します（詳細は [14 新機能まとめ](14-whats-new.md#model)）。
+`opusplan` は「計画の質は担保しつつ実装コストは抑えたい」ときに便利です。
+
 ---
 
 ## 1-5. 使い始める前に知っておくとよいこと
@@ -166,6 +184,7 @@ Claude Code には変更を巻き戻す機能（チェックポイント）が�
 ## 次に読む
 
 - 実際に動かす → [02 インストールとセットアップ](02-setup.md)
+- 業務での使いどころを知りたい → [13 活用事例](13-use-cases.md)
 - 用語がわからない → [用語集](glossary.md)
 
 **公式ドキュメント**: https://code.claude.com/docs/en/overview

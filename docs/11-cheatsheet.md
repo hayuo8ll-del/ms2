@@ -33,6 +33,9 @@
 | `claude --version` | バージョン確認 |
 | `claude update` | 最新版に更新 |
 | `claude doctor` | インストール・設定を診断 |
+| `claude plugin eval` / `eval init` | プラグインをテストケースで採点（`init` でケースを生成）。v2.1.269〜 |
+| `claude purge` | プロジェクトのローカル状態を削除（旧名 `claude project purge` も動く） |
+| `claude --desktop` | デスクトップアプリを現在のディレクトリ（または `--continue` / `--resume` のセッション）で開く |
 | `claude auth login` / `logout` / `status` | 認証の操作・確認 |
 | `claude mcp` | MCP サーバーを設定 |
 | `claude mcp list` | MCP サーバーの一覧と接続状態 |
@@ -42,6 +45,7 @@
 | `claude attach <id>` / `logs <id>` / `stop <id>` / `rm <id>` | バックグラウンドセッションの操作 |
 | `claude auto-mode defaults` | auto モードの分類ルールを JSON で出力 |
 | `claude setup-token` | 長期有効な OAuth トークンを生成 |
+| `claude self-hosted-runner setup` | セルフホスト環境のランナーを構築（Team / Enterprise） |
 
 ### よく使うフラグ
 
@@ -61,7 +65,8 @@
 | フラグ | 説明 |
 | --- | --- |
 | `--model` | モデルを指定（`sonnet` / `opus` / `haiku` / `fable`） |
-| `--effort` | 努力度（`low` / `medium` / `high` / `xhigh` / `max` / `ultracode`） |
+| `--effort` | 努力度（`low` / `medium` / `high` / `xhigh` / `max`）。`ultracode` を渡すと `xhigh` で開始し ultracode を有効化 |
+| `--restricted` | コマンド実行ツールなしで起動（評価ハーネス向け。`CLAUDE_CODE_RESTRICTED=1` でも可） |
 | `--fallback-model` | フォールバック先のモデル |
 
 **権限**
@@ -79,7 +84,7 @@
 | フラグ | 説明 |
 | --- | --- |
 | `--add-dir` | 作業ディレクトリを追加 |
-| `-w`, `--worktree` | git worktree を作ってそこで作業 |
+| `-w`, `--worktree` | git worktree を作ってそこで作業。PR / マージリクエストの URL を渡すとそのブランチから開始 |
 | `--tmux` | worktree 用の tmux セッションを作る |
 
 **出力**
@@ -140,7 +145,9 @@
 | `/config`（`/settings`） | 設定画面を開く |
 | `/permissions` | 承認ルールを設定 |
 | `/model [モデル]` | モデルを切り替え |
-| `/effort [レベル]` | 努力度を設定 |
+| `/effort [レベル\|auto\|status\|ultracode [on\|off]]` | 努力度を設定。**レベルはモデルごとに保存**（`Enter`で保存、`s` で今回のセッションのみ）。ultracode は別のトグル |
+| `/autocompact [auto\|トークン数]` | 自動圧縮を始める大きさを設定（モデルごとに保存） |
+| `/output-style [スタイル]` | 出力スタイルの一覧表示・切り替え（`/config` からも可） |
 | `/fast [on\|off]` | 高速モードの切り替え |
 | `/keybindings` | キーバインド設定ファイルを開く |
 | `/add-dir <パス>` | 作業ディレクトリを追加 |
@@ -150,26 +157,29 @@
 
 | コマンド | 説明 |
 | --- | --- |
-| `/agents` | サブエージェントの設定を管理 |
+| `/agents` | **案内表示のみ**（管理画面は無くなった）。作成・管理は Claude に頼むか `.claude/agents/` を直接編集 |
 | `/skills` | カスタムスキルを管理 |
 | `/hooks` | 設定されているフックを閲覧 |
 | `/mcp` | MCP サーバーの接続を管理 |
 | `/plugins` | プラグインを管理 |
-| `/subtask <指示>` | サブエージェントに脇道タスクを渡す |
+| `/subtask <指示>` | 会話を引き継いだサブエージェント（fork）に脇道タスクを渡す |
 | `/tasks` | バックグラウンド作業の一覧 |
+| `/list-agents`（`/peers`） | メッセージを送れる他のセッションを一覧表示 |
+| `/reload-plugins` | プラグインを再読み込み |
 
 ### 開発ワークフロー
 
 | コマンド | 説明 |
 | --- | --- |
 | `/plan` | プランモードに切り替え |
-| `/diff` | 未コミットの変更を差分ビューアで表示 |
-| `/code-review [レベル] [--fix]` | 差分をバグ観点でレビュー |
+| `/diff` | 未コミットの変更を表示。フルスクリーン表示（幅 110 桁以上）では**会話の横にライブ更新のパネル**が開く |
+| `/code-review [レベル] [--fix] [--comment] [--max-findings n\|all]`（`/review`） | 差分をバグ観点でレビュー。バックグラウンドで実行され、レベル省略時は前回の指定を再利用 |
+| `/design [指示]` | UI の設計案を編集可能なアートボードとして描く（リサーチプレビュー） |
+| `/claude-security` | 複数エージェントによる脆弱性スキャン（プラグインの導入が必要） |
 | `/security-review` | 差分をセキュリティ観点でチェック |
 | `/simplify` | コードの簡素化を提案・適用 |
 | `/test [ファイル]` | テストを実行して失敗をデバッグ |
 | `/verify` | 変更が要件を満たすか検証 |
-| `/review [PR番号]` | GitHub PR をレビュー |
 | `/pr-feedback` | オープン中の PR のフィードバックを取得 |
 | `/pr-summary` | オープン中の PR の変更を要約 |
 | `/autofix-pr` | PR を監視して CI 失敗時に修正をプッシュ |
@@ -195,7 +205,13 @@
 | コマンド | 説明 |
 | --- | --- |
 | `/help` | ヘルプとコマンド一覧 |
-| `/doctor`（`/checkup`） | 環境チェックと修正提案 |
+| `/doctor`（`/checkup`） | 環境チェックと修正提案。`/doctor prompt-audit` は指示ファイルを診断 |
+| `/skill-doctor` | スキルごとのコンテキスト消費と使用頻度を表示 |
+| `/auto-mode-setup` | プロジェクトと最近のセッションから `autoMode.environment` の候補を作る |
+| `/rate-limit-options` | 使用上限に当たったときの選択肢を表示（自動継続など） |
+| `/import [codex\|gemini\|cursor]` | 他ツールの設定を Claude Code に取り込む |
+| `/reload-skills` | スキル・コマンドのディレクトリを再スキャン |
+| `/stop` | アタッチ中のバックグラウンドセッションを停止 |
 | `/debug [説明]` | デバッグログを有効化して問題を切り分け |
 | `/usage`（`/cost`） | トークン使用量とコスト |
 | `/insights` | セッションの分析レポート |
@@ -237,6 +253,7 @@
 | `Ctrl+O` | トランスクリプトビューアの切り替え |
 | `Ctrl+R` | コマンド履歴の逆順検索 |
 | `Ctrl+B` | 実行中のタスクをバックグラウンドへ |
+| `Ctrl+Enter`（`Ctrl+X` `Ctrl+S`） | 今すぐ送信（実行中のターンを中断して溜まったメッセージを送る） |
 | `Ctrl+T` | TODO チェックリストの表示切り替え |
 | `Ctrl+S` | 入力の一時退避／復元 |
 | `Ctrl+Z` | プロセスを一時停止（Unix のみ。`fg` で復帰） |
@@ -317,11 +334,64 @@ your-project/
 
 ---
 
-## 11-5. 権限モード早見
+## 11-5. 主な設定キー
+
+`~/.claude/settings.json` や `.claude/settings.json` に書きます。
+
+| キー | 内容 |
+| --- | --- |
+| `permissions.defaultMode` | 既定の権限モード（`auto` はユーザー設定にのみ書ける） |
+| `permissions.allow` / `ask` / `deny` | ツールごとの許可・確認・拒否ルール |
+| `outputStyle` | 出力スタイル（`Concise` / `Proactive` / `Explanatory` / `Learning`） |
+| `model` | 使用するモデル |
+| `crossSessionInbound` | 他セッションからのメッセージの扱い（`accept` / `hold` / `refuse`） |
+| `isolatePeerMachines` | 別マシンへのメッセージ送信に承認を要求する |
+| `spellcheck` | 入力中の綴り誤りに下線を引く |
+| `modelPicker` | `/model` の一覧に自分のエントリを追加・置換する |
+| `maxEffortLevel` | 努力度の上限（全プロバイダ。モデル別にも指定可） |
+| `fallbackModel` | 失敗時に順に試すモデル（最大 3 つ） |
+| `idleCompaction` | `false` でアイドル中の自動圧縮を無効化 |
+| `promptCacheTtl` / `subagentPromptCacheTtl` | プロンプトキャッシュの保持時間（`1h` など。API キー・クラウドプロバイダ） |
+| `bashOutputMaxChars` | Bash の出力を Claude に渡す上限文字数（最大 128,000） |
+| `maxProseWidth` | 広いターミナルでの本文の幅の上限 |
+| `attribution` | `false` でコミット・PR の帰属表記を非表示 |
+| `syncClaudeAiSkills` / `syncClaudeAiPlugins` | claude.ai 側のスキル・プラグインの同期（`false` で無効） |
+| `emojiCompletionEnabled` | 絵文字ショートコードの補完 |
+| `autoMemoryEnabled` | オートメモリの有効・無効 |
+| `sandbox.filesystem.disabled` | ファイルシステム隔離だけを外す |
+| `claudeMdExcludes` | 読み込まない CLAUDE.md をパターンで指定 |
+| `hooks` | フックの定義 |
+
+## 11-6. 主な環境変数
+
+| 変数 | 内容 |
+| --- | --- |
+| `ANTHROPIC_DEFAULT_MODEL` | 新規セッションが開始するモデル（v2.1.236 以降） |
+| `ANTHROPIC_MODEL` | 使用するモデル（設定より優先） |
+| `ANTHROPIC_API_KEY` | API キー認証 |
+| `CLAUDE_CODE_FORK_SUBAGENT` | `0` で fork モードを無効化 |
+| `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` | サブエージェントの同時実行数（既定 20） |
+| `CLAUDE_CODE_ENABLE_TODO_TOOLS` | `1` で TODO 管理ツールを再有効化 |
+| `CLAUDE_CODE_RESTRICTED` | `1` で restricted モード（コマンド実行ツールなし） |
+| `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `1` で 100万トークンを使わず 200K に |
+| `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` | アイドル圧縮の下限（既定 200K） |
+| `CLAUDE_CODE_WEBFETCH_DEADLINE_MS` | WebFetch の期限（既定 5 分、`0` で無制限） |
+| `CLAUDE_CODE_DISABLE_WEB_FETCH` | WebFetch ツールを無効化 |
+| `CLAUDE_CODE_DISABLE_FILE_MENTIONS` | `@` で中身ではなくパスだけを渡す |
+| `CLAUDE_CODE_AUTO_MODE_SERVER` | `0` でサーバー側の分類審査をオプトアウト |
+| `CLAUDE_CODE_TOOL_MEMORY_LIMIT` | Bash / PowerShell ツールのメモリ上限（Linux / WSL） |
+| `CLAUDE_CODE_GOAL_CHECKIN_MINUTES` | `/goal` の待機中の確認間隔（`0` で無効） |
+| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | `1` でエージェントチームを有効化 |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | 自動圧縮を始める使用率 |
+| `USE_BUILTIN_RIPGREP` | `0` でシステムの ripgrep を使う |
+| `MAX_THINKING_TOKENS` | 思考トークンの上限（固定budget のモデルのみ） |
+
+## 11-7. 権限モード早見
 
 | モード | 確認なしで実行 | 切り替え |
 | --- | --- | --- |
 | `default`（Manual） | 読み取りのみ | `Shift+Tab` |
+| **既定** | **v2.1.283 以降、ターミナルと VS Code の対話セッションは全プランで `auto` から始まる**（`claude -p` は `default`） | — |
 | `acceptEdits` | 読み取り＋編集＋基本ファイル操作 | `Shift+Tab` |
 | `plan` | 読み取りのみ（編集ブロック） | `Shift+Tab` / `/plan` |
 | `auto` | ほぼすべて（分類モデルが監視） | `Shift+Tab`（条件を満たす場合） |

@@ -523,3 +523,7 @@ done < files.txt
 - コストが想定を超えたら → [10-5 コストとトークンを節約する](10-troubleshooting.md)
 
 **公式ドキュメント**: https://code.claude.com/docs/en/headless / https://code.claude.com/docs/en/github-actions / https://code.claude.com/docs/en/routines / https://code.claude.com/docs/en/hooks
+
+---
+
+**関連**: 個別作業の具体的な進め方は [13 活用事例](13-use-cases.md)、最近の変更は [14 新機能まとめ](14-whats-new.md) を参照してください。

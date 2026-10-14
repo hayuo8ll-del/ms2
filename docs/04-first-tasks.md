@@ -238,5 +238,6 @@ AskUserQuestion ツールを使って、詳しくインタビューして。
 ## 次に読む
 
 - 精度を上げるコツを体系的に学ぶ → [05 効果的な使い方](05-best-practices.md)
+- 業務での具体的なワークフロー（テスト追加・障害調査・自動化） → [13 活用事例](13-use-cases.md)
 
 **公式ドキュメント**: https://code.claude.com/docs/en/common-workflows

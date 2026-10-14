@@ -151,7 +151,9 @@ Claude がコードベースを解析し、ビルドシステム・テストフ�
 
 ### `AGENTS.md` を使っている場合
 
-Claude Code が読むのは `CLAUDE.md` であって `AGENTS.md` ではありません。すでに `AGENTS.md` がある場合は、こう書いた `CLAUDE.md` を作ると両立できます。
+**v2.1.277 以降、`CLAUDE.md` が無いプロジェクトでは、Claude Code は `AGENTS.md` を読みます**（`/config` の **Project instructions** で挙動を変えられます）。Bedrock・Vertex・Foundry・LLM ゲートウェイでも同様です。
+
+`CLAUDE.md` と `AGENTS.md` の**両方がある**場合に Claude 固有の指示も足したいなら、こう書いた `CLAUDE.md` から取り込むと両立できます。
 
 ```markdown
 @AGENTS.md
